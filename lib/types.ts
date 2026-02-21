@@ -9,6 +9,7 @@ export type ModelUsage = {
   model: string;
   requests: number;
   tokens: number;
+  /** Regular input tokens: net input minus cached, clamped to zero. */
   inputTokens: number;
   outputTokens: number;
   cost: number;
@@ -20,6 +21,7 @@ export type UsageSeriesPoint = {
   errors?: number;
   tokens: number;
   cost?: number;
+  /** Regular input tokens (input minus cached, clamped). */
   inputTokens?: number;
   outputTokens?: number;
   reasoningTokens?: number;
@@ -30,6 +32,7 @@ export type UsageSeriesPoint = {
 export type UsageOverview = {
   totalRequests: number;
   totalTokens: number;
+  /** Regular input tokens over the overview (input minus cached, clamped). */
   totalInputTokens: number;
   totalOutputTokens: number;
   totalReasoningTokens: number;

@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 2026-02-21
+
+- 首页仪表盘的输入 token 展示统一为 `regular-input` 语义（`input - cached`，且下限钳制为 0），相关 UI 文案保持为“输入”，减少展示口径歧义；成本计算路径保持不变。
+
 ## 2026-02-15
 
 - 调整 `records` 页提供商染色策略：覆盖 `GeminiCLI`、`Vertex`、`AIStudio`、`Antigravity`、`Claude`、`Codex`、`Qwen`、`Kimi`、`iFlow`（大小写不敏感），提升来源识别度与颜色区分度。

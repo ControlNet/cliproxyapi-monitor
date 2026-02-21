@@ -10,7 +10,8 @@ type ModelAggRow = {
   model: string;
   requests: number;
   tokens: number;
-  inputTokens: number;
+  rawInputTokens: number;
+  regularInputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
   cachedTokens: number;
@@ -19,6 +20,7 @@ type TotalsRow = {
   totalRequests: number;
   totalTokens: number;
   inputTokens: number;
+  regularInputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
   cachedTokens: number;
@@ -26,7 +28,7 @@ type TotalsRow = {
   failureCount: number;
 };
 type DayAggRow = { label: string; requests: number; errors: number; tokens: number };
-type DayModelAggRow = { label: string; model: string; inputTokens: number; outputTokens: number; reasoningTokens: number; cachedTokens: number };
+type DayModelAggRow = { label: string; model: string; rawInputTokens: number; outputTokens: number; reasoningTokens: number; cachedTokens: number };
 type HourAggRow = { 
   label: string;
   hourStart: Date | string;
@@ -125,12 +127,14 @@ export async function getOverview(
   const dayExpr = sql`date_trunc('day', ${usageRecords.occurredAt} at time zone ${tzLiteral})`;
   const hourExpr = sql`date_trunc('hour', ${usageRecords.occurredAt} at time zone ${tzLiteral})`;
   const credentialNameExpr = sql<string>`coalesce(nullif(${authFileMappings.name}, ''), nullif(${usageRecords.source}, ''), '-')`;
+  const REGULAR_INPUT_EXPR = sql<number>`greatest(${sql.raw('"usage_records"."input_tokens"')} - ${sql.raw('"usage_records"."cached_tokens"')}, 0)`;
 
   const totalsPromise: Promise<TotalsRow[]> = db
     .select({
       totalRequests: sql<number>`count(*)`,
       totalTokens: sql<number>`coalesce(sum(${usageRecords.totalTokens}), 0)`,
       inputTokens: sql<number>`coalesce(sum(${usageRecords.inputTokens}), 0)`,
+      regularInputTokens: sql<number>`coalesce(sum(${REGULAR_INPUT_EXPR}), 0)`,
       outputTokens: sql<number>`coalesce(sum(${usageRecords.outputTokens}), 0)`,
       reasoningTokens: sql<number>`coalesce(sum(${usageRecords.reasoningTokens}), 0)`,
       cachedTokens: sql<number>`coalesce(sum(${usageRecords.cachedTokens}), 0)`,
@@ -152,7 +156,8 @@ export async function getOverview(
       model: usageRecords.model,
       requests: sql<number>`count(*)`,
       tokens: sql<number>`sum(${usageRecords.totalTokens})`,
-      inputTokens: sql<number>`sum(${usageRecords.inputTokens})`,
+      rawInputTokens: sql<number>`sum(${usageRecords.inputTokens})`,
+      regularInputTokens: sql<number>`coalesce(sum(${REGULAR_INPUT_EXPR}), 0)`,
       outputTokens: sql<number>`sum(${usageRecords.outputTokens})`,
       reasoningTokens: sql<number>`coalesce(sum(${usageRecords.reasoningTokens}), 0)`,
       cachedTokens: sql<number>`coalesce(sum(${usageRecords.cachedTokens}), 0)`
@@ -181,7 +186,7 @@ export async function getOverview(
     .select({
       label: sql<string>`to_char(${dayExpr}, 'YYYY-MM-DD')`,
       model: usageRecords.model,
-      inputTokens: sql<number>`sum(${usageRecords.inputTokens})`,
+      rawInputTokens: sql<number>`sum(${usageRecords.inputTokens})`,
       outputTokens: sql<number>`sum(${usageRecords.outputTokens})`,
       reasoningTokens: sql<number>`coalesce(sum(${usageRecords.reasoningTokens}), 0)`,
       cachedTokens: sql<number>`coalesce(sum(${usageRecords.cachedTokens}), 0)`
@@ -197,7 +202,7 @@ export async function getOverview(
       hourStart: sql<Date>`(${hourExpr}) at time zone ${tzLiteral}`,
       requests: sql<number>`count(*)`,
       tokens: sql<number>`sum(${usageRecords.totalTokens})`,
-      inputTokens: sql<number>`sum(${usageRecords.inputTokens})`,
+      inputTokens: sql<number>`coalesce(sum(${REGULAR_INPUT_EXPR}), 0)`,
       outputTokens: sql<number>`sum(${usageRecords.outputTokens})`,
       reasoningTokens: sql<number>`coalesce(sum(${usageRecords.reasoningTokens}), 0)`,
       cachedTokens: sql<number>`coalesce(sum(${usageRecords.cachedTokens}), 0)`
@@ -263,7 +268,7 @@ export async function getOverview(
   ]);
 
   const totalsRow =
-    totalsRowResult[0] ?? { totalRequests: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cachedTokens: 0, successCount: 0, failureCount: 0 };
+    totalsRowResult[0] ?? { totalRequests: 0, totalTokens: 0, inputTokens: 0, regularInputTokens: 0, outputTokens: 0, reasoningTokens: 0, cachedTokens: 0, successCount: 0, failureCount: 0 };
 
   const totalModelsRow = totalModelsRowResult[0] ?? { count: 0 };
   const prices = priceMap(
@@ -276,9 +281,12 @@ export async function getOverview(
   );
 
   const models: ModelUsage[] = byModelRows.map((row) => {
+    const rawInputTokensForCost = toNumber(row.rawInputTokens);
+    const regularInputTokensForDisplay = toNumber(row.regularInputTokens);
     const cost = estimateCost(
       {
-        inputTokens: toNumber(row.inputTokens),
+        // Billing must always use raw input tokens (paired with cached tokens).
+        inputTokens: rawInputTokensForCost,
         cachedTokens: toNumber(row.cachedTokens),
         outputTokens: toNumber(row.outputTokens),
         reasoningTokens: toNumber(row.reasoningTokens)
@@ -290,7 +298,7 @@ export async function getOverview(
       model: row.model,
       requests: toNumber(row.requests),
       tokens: toNumber(row.tokens),
-      inputTokens: toNumber(row.inputTokens),
+      inputTokens: regularInputTokensForDisplay,
       outputTokens: toNumber(row.outputTokens),
       cost
     };
@@ -298,9 +306,11 @@ export async function getOverview(
 
   const dailyCostMap = new Map<string, number>();
   for (const row of byDayModelRows) {
+    const rawInputTokensForCost = toNumber(row.rawInputTokens);
     const cost = estimateCost(
       {
-        inputTokens: toNumber(row.inputTokens),
+        // Keep day cost on raw input to avoid accidental double deduction.
+        inputTokens: rawInputTokensForCost,
         cachedTokens: toNumber(row.cachedTokens),
         outputTokens: toNumber(row.outputTokens),
         reasoningTokens: toNumber(row.reasoningTokens)
@@ -342,7 +352,7 @@ export async function getOverview(
   const overview: UsageOverview = {
     totalRequests,
     totalTokens: toNumber(totalsRow.totalTokens),
-    totalInputTokens: toNumber(totalsRow.inputTokens),
+    totalInputTokens: toNumber(totalsRow.regularInputTokens),
     totalOutputTokens: toNumber(totalsRow.outputTokens),
     totalReasoningTokens: toNumber(totalsRow.reasoningTokens),
     totalCachedTokens: toNumber(totalsRow.cachedTokens),
