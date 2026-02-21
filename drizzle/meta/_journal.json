@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1767327719807,
+      "tag": "0000_pink_christian_walker",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1769060000000,
+      "tag": "0001_remove_request_counts",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1771065600000,
+      "tag": "0002_add_source_to_usage_records",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1771069200000,
+      "tag": "0003_add_auth_index_to_usage_records",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1771072800000,
+      "tag": "0004_add_auth_file_mappings",
+      "breakpoints": true
+    }
+  ]
+}

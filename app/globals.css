@@ -1,0 +1,305 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+  --scrollbar-size: 6px;
+  --scrollbar-thumb: #475569;
+  --scrollbar-thumb-hover: #64748b;
+  --scrollbar-track: transparent;
+}
+
+html:not(.dark) {
+  color-scheme: light;
+  --scrollbar-thumb: #b0bccd;
+  --scrollbar-thumb-hover: #8fa3bb;
+  --scrollbar-track: #eef2f7;
+}
+
+html {
+  font-size: 16px;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: #0f172a;
+  color: #f1f5f9;
+}
+
+/* 统一扁平窄滚动条样式 */
+body,
+.scrollbar-slim,
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar,
+.scrollbar-slim::-webkit-scrollbar,
+.custom-scrollbar::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+*::-webkit-scrollbar-track,
+.scrollbar-slim::-webkit-scrollbar-track,
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-thumb,
+.scrollbar-slim::-webkit-scrollbar-thumb,
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 9999px;
+  transition: background 0.2s ease;
+}
+
+*::-webkit-scrollbar-thumb:hover,
+.scrollbar-slim::-webkit-scrollbar-thumb:hover,
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* 模态框动画 */
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-modal-backdrop {
+  animation: modalFadeIn 0.2s ease-out;
+}
+
+.animate-modal-content {
+  animation: modalSlideIn 0.25s ease-out forwards;
+}
+
+@keyframes modalFadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes modalSlideOut {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95) translateY(-10px);
+  }
+}
+
+.animate-modal-backdrop-out {
+  animation: modalFadeOut 0.2s ease-in forwards;
+}
+
+.animate-modal-content-out {
+  animation: modalSlideOut 0.2s ease-in forwards;
+}
+
+/* Toast通知动画 */
+@keyframes toastSlideInFromTop {
+  from {
+    opacity: 0;
+    transform: translateY(-100%) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes toastSlideOutToTop {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-100%) scale(0.9);
+  }
+}
+
+@keyframes toastEmojiPop {
+  0% {
+    opacity: 0;
+    transform: scale(0);
+  }
+  50% {
+    transform: scale(1.2);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-toast-in {
+  animation: toastSlideInFromTop 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-toast-out {
+  animation: toastSlideOutToTop 0.4s cubic-bezier(0.7, 0, 0.84, 0) forwards;
+}
+
+.animate-emoji-pop {
+  animation: toastEmojiPop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.15s forwards;
+  opacity: 0;
+}
+
+/* 卡片浮动出现动画 */
+@keyframes cardFloatIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-card-float {
+  animation: cardFloatIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  opacity: 0;
+}
+
+/* 下拉框动画 */
+@keyframes dropdownSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes dropdownSlideOut {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.95);
+  }
+}
+
+.animate-dropdown-in {
+  animation: dropdownSlideIn 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  opacity: 0;
+  transform: translateY(-8px) scale(0.95);
+}
+
+.animate-dropdown-out {
+  animation: dropdownSlideOut 0.1s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+/* View Transition 基础优化：减缓快照交叉淡入淡出，使过渡更自然 */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.3s;
+}
+
+/* DayPicker 暗色主题适配 */
+.rdp.rdp-dark {
+  --rdp-accent-color: #6366f1;
+  --rdp-background-color: transparent;
+  --rdp-outline: none;
+  color: #e2e8f0;
+}
+
+.rdp.rdp-dark .rdp-button {
+  color: #e2e8f0;
+  pointer-events: auto;
+  position: relative;
+}
+
+.rdp.rdp-dark .rdp-button:hover:not([disabled]) {
+  background-color: #6366f1;
+  color: #ffffff;
+}
+
+/* 范围选择样式 - 创建连续的背景条带 */
+.rdp.rdp-dark .rdp-day_range_start,
+.rdp.rdp-dark .rdp-day_range_end,
+.rdp.rdp-dark .rdp-day_range_middle {
+  position: relative;
+}
+
+.rdp.rdp-dark .rdp-day_range_start::before,
+.rdp.rdp-dark .rdp-day_range_end::before,
+.rdp.rdp-dark .rdp-day_range_middle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(99, 102, 241, 0.25);
+  z-index: -1;
+}
+
+.rdp.rdp-dark .rdp-day_range_start::before {
+  border-radius: 0.5rem 0 0 0.5rem;
+}
+
+.rdp.rdp-dark .rdp-day_range_end::before {
+  border-radius: 0 0.5rem 0.5rem 0;
+}
+
+.rdp.rdp-dark .rdp-day_range_start {
+  border-radius: 0.5rem 0 0 0.5rem;
+}
+
+.rdp.rdp-dark .rdp-day_range_end {
+  border-radius: 0 0.5rem 0.5rem 0;
+}
+
+.rdp.rdp-dark .rdp-day_range_middle {
+  border-radius: 0;
+}
+
+.rdp.rdp-dark .rdp-day_selected,
+.rdp.rdp-dark .rdp-day_range_start,
+.rdp.rdp-dark .rdp-day_range_end {
+  background-color: #4f46e5;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.rdp.rdp-dark .rdp-day_range_middle {
+  color: #e0e7ff;
+}
+
+.rdp.rdp-dark .rdp-day_outside,
+.rdp.rdp-dark .rdp-day_disabled {
+  color: #64748b;
+}
