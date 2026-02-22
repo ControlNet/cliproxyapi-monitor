@@ -32,6 +32,12 @@ type OverviewAPIResponse = {
   filters?: { models: string[]; routes: string[]; names: string[] };
 };
 
+type LastSyncPayload = {
+  lastSyncAt?: string | null;
+  latestUsageSyncAt?: string | null;
+  pendingUsageRequests?: number;
+};
+
 type PriceForm = {
   model: string;
   inputPricePer1M: string;
@@ -221,6 +227,8 @@ export default function DashboardPage() {
     const parsed = saved ? Number.parseInt(saved, 10) : 0;
     return Number.isFinite(parsed) ? parsed : 0;
   });
+  const [viewedUsageSyncAt, setViewedUsageSyncAt] = useState<string | null>(null);
+  const [pendingUsageRequests, setPendingUsageRequests] = useState(0);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [ready, setReady] = useState(false);
   const [pieMode, setPieMode] = useState<"tokens" | "requests">("tokens");
@@ -518,7 +526,7 @@ export default function DashboardPage() {
   }, []);
 
   // 执行数据同步
-  const doSync = useCallback(async (showMessage = true, triggerRefresh = true, timeout = 60000) => {
+  const doSync = useCallback(async (showMessage = true, triggerRefresh = true, timeout = 60000, forceRefreshOverview = false) => {
     if (syncingRef.current) return;
     syncingRef.current = true;
     setSyncing(true);
@@ -566,9 +574,10 @@ export default function DashboardPage() {
             window.localStorage.setItem("lastSyncStatus", successMsg);
           }
         }
-          if (triggerRefresh && inserted > 0) {
+          if (triggerRefresh && (inserted > 0 || forceRefreshOverview)) {
             skipOverviewCacheRef.current = true;
             setRefreshTrigger((prev) => prev + 1);
+            setPendingUsageRequests(0);
           }
       }
     } catch (err) {
@@ -701,10 +710,11 @@ export default function DashboardPage() {
 
     const loadLastSync = async () => {
       try {
-        const res = await fetch("/api/last-sync", { cache: "no-store" });
+        const sinceQuery = viewedUsageSyncAt ? `?since=${encodeURIComponent(viewedUsageSyncAt)}` : "";
+        const res = await fetch(`/api/last-sync${sinceQuery}`, { cache: "no-store" });
         if (!res.ok || !active) return;
 
-        const data = (await res.json()) as { lastSyncAt?: string | null };
+        const data = (await res.json()) as LastSyncPayload;
         if (!active) return;
 
         if (data.lastSyncAt) {
@@ -721,6 +731,13 @@ export default function DashboardPage() {
             window.localStorage.removeItem("lastSyncTime");
           }
         }
+
+        const pending = Number(data.pendingUsageRequests ?? 0);
+        if (Number.isFinite(pending) && pending > 0) {
+          setPendingUsageRequests(Math.floor(pending));
+        } else {
+          setPendingUsageRequests(0);
+        }
       } catch (error) {
         console.warn("Failed to poll /api/last-sync", error);
       }
@@ -733,7 +750,7 @@ export default function DashboardPage() {
       active = false;
       window.clearInterval(intervalId);
     };
-  }, [ready]);
+  }, [ready, viewedUsageSyncAt]);
 
   useEffect(() => {
     if (!customPickerOpen) return;
@@ -796,6 +813,13 @@ export default function DashboardPage() {
         setRouteOptions(Array.from(new Set(data.filters?.routes ?? [])));
         setNameOptions(Array.from(new Set(data.filters?.names ?? [])));
         setAppliedDays(data.days ?? rangeDays);
+
+        const syncRes = await fetch("/api/last-sync", { cache: "no-store", signal: controller.signal });
+        if (syncRes.ok && active) {
+          const syncData = (await syncRes.json()) as LastSyncPayload;
+          setViewedUsageSyncAt(syncData.latestUsageSyncAt ?? null);
+          setPendingUsageRequests(0);
+        }
       } catch (err) {
         if (!active) return;
         const error = err as Error;
@@ -1125,20 +1149,27 @@ export default function DashboardPage() {
           >
             {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </button>
-          <button
-            onClick={() => doSync(true)}
-            disabled={syncing}
-            className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
-              syncing
-                ? darkMode
-                  ? "cursor-not-allowed border-slate-700 bg-slate-800 text-slate-500"
-                  : "cursor-not-allowed border-slate-300 bg-slate-200 text-slate-500"
-                : "border-indigo-500/50 bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600/30"
-            }`}
-          >
-            <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-            {syncing ? "同步中..." : "刷新数据"}
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => doSync(true, true, 60000, pendingUsageRequests > 0)}
+              disabled={syncing}
+              className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
+                syncing
+                  ? darkMode
+                    ? "cursor-not-allowed border-slate-700 bg-slate-800 text-slate-500"
+                    : "cursor-not-allowed border-slate-300 bg-slate-200 text-slate-500"
+                  : "border-indigo-500/50 bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600/30"
+              }`}
+            >
+              <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+              {syncing ? "同步中..." : "刷新数据"}
+            </button>
+            {pendingUsageRequests > 0 && !syncing ? (
+              <span className="pointer-events-none absolute -right-2 -top-2 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
+                {pendingUsageRequests > 99 ? "99+" : pendingUsageRequests}
+              </span>
+            ) : null}
+          </div>
           <div className="flex flex-col items-end gap-0.5">
             <div className={`flex items-center gap-2 text-sm ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
               <Activity className="h-4 w-4" />
