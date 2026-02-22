@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { config } from "@/lib/config";
 
 export const runtime = "nodejs";
 
-const PASSWORD = process.env.PASSWORD || process.env.CLIPROXY_SECRET_KEY || "";
+const PASSWORD = config.password;
 const COOKIE_NAME = "dashboard_auth";
 const COOKIE_MAX_AGE = 30 * 24 * 60 * 60; // 30 days
+const cookieSecure = /^(1|true|yes|on)$/i.test(process.env.AUTH_COOKIE_SECURE ?? "");
 
 // 速率限制配置
 const ATTEMPTS_PER_WINDOW = 10; // 每个时间窗口允许的尝试次数
@@ -98,7 +100,7 @@ export async function POST(request: NextRequest) {
         value: providedToken,
         httpOnly: true,
         sameSite: "lax",
-        secure: process.env.NODE_ENV === "production",
+        secure: cookieSecure,
         maxAge: COOKIE_MAX_AGE,
         path: "/"
       });

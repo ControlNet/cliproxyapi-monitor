@@ -12,3 +12,11 @@ yarn-error.log*
 pnpm-debug.log*
 bun.lockb
 .drizzle
+
+# Backup artifacts
+backups/
+
+# CLIProxyAPI runtime config (may contain secrets)
+config.yaml
+.sisyphus/
+.beads/

@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { drizzle } from "drizzle-orm/vercel-postgres";
-import { createPool } from "@vercel/postgres";
-import { migrate } from "drizzle-orm/vercel-postgres/migrator";
+import { Pool } from "pg";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 
-const pool = createPool({
-  connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL
-});
+function getDatabaseUrl() {
+  const databaseUrl = process.env.DATABASE_URL;
 
-const db = drizzle(pool);
+  if (!databaseUrl) {
+    throw new Error("DATABASE_URL 未设置");
+  }
+
+  return databaseUrl;
+}
 
 function getMigrationMeta(migrationsFolder) {
   const journalPath = `${migrationsFolder}/meta/_journal.json`;
@@ -28,9 +32,12 @@ function getMigrationMeta(migrationsFolder) {
 }
 
 async function runMigrations() {
+  const pool = new Pool({ connectionString: getDatabaseUrl() });
+  const db = drizzle(pool);
+
   try {
     console.log("检查迁移表...");
-    
+
     await pool.query("CREATE SCHEMA IF NOT EXISTS drizzle");
     await pool.query(
       "CREATE TABLE IF NOT EXISTS drizzle.__drizzle_migrations (id SERIAL PRIMARY KEY, hash TEXT NOT NULL, created_at BIGINT)"
@@ -38,7 +45,7 @@ async function runMigrations() {
 
     // 获取本地所有迁移元数据
     const allMigrations = getMigrationMeta("./drizzle");
-    
+
     // 检查数据库中已有的迁移记录
     const existingMigrations = await pool.query(
       "SELECT hash, created_at FROM drizzle.__drizzle_migrations"
@@ -54,7 +61,7 @@ async function runMigrations() {
     if (tableExists.rows.length > 0) {
       // 找出 0000 迁移
       const initialMigration = allMigrations.find((m) => m.tag.startsWith("0000_"));
-      
+
       if (initialMigration && !existingHashes.has(initialMigration.hash)) {
         console.log("检测到表已存在但迁移未标记，正在标记...");
         await pool.query(
@@ -68,13 +75,12 @@ async function runMigrations() {
     console.log("执行数据库迁移...");
     await migrate(db, { migrationsFolder: "./drizzle" });
     console.log("✓ 迁移完成");
-    
-    process.exit(0);
-  } catch (error) {
-    console.error("迁移失败:", error);
-    // 不阻止构建继续
-    process.exit(0);
+  } finally {
+    await pool.end();
   }
 }
 
-runMigrations();
+runMigrations().catch((error) => {
+  console.error("迁移失败:", error);
+  process.exit(1);
+});

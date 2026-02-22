@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { config as appConfig } from "@/lib/config";
 
-const password = process.env.PASSWORD || process.env.CLIPROXY_SECRET_KEY || "";
+const password = appConfig.password;
 const realm = "CLIProxy Dashboard";
 const COOKIE_NAME = "dashboard_auth";
 const COOKIE_MAX_AGE = 30 * 24 * 60 * 60; // 30 days
-const cookieSecure = process.env.NODE_ENV === "production";
+const cookieSecure = /^(1|true|yes|on)$/i.test(process.env.AUTH_COOKIE_SECURE ?? "");
 const expectedTokenPromise = password ? hashPassword(password) : null;
 
 function decodeBasicToken(encoded: string) {

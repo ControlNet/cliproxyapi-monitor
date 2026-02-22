@@ -158,7 +158,7 @@ export default function Sidebar() {
         
         <div className="flex items-center gap-2">
           <a
-            href="https://github.com/sxjeru/CLIProxyAPI-Monitor"
+            href="https://github.com/ControlNet/cliproxyapi-monitor"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center justify-center rounded-lg border border-slate-700 p-2 text-slate-500 transition hover:bg-slate-800 hover:text-slate-300"

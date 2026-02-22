@@ -7,7 +7,7 @@ import { modelPrices, usageRecords } from "@/lib/db/schema";
 
 export const runtime = "nodejs";
 
-const PASSWORD = process.env.PASSWORD || process.env.CLIPROXY_SECRET_KEY || "";
+const PASSWORD = config.password;
 const COOKIE_NAME = "dashboard_auth";
 const SYNC_LOCK_TTL_MS = 1 * 60 * 1000;
 

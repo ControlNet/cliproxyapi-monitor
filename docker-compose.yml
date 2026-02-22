@@ -1,0 +1,123 @@
+services:
+  dashboard:
+    image: controlnet/cliproxyapi-monitor:latest
+    ports:
+      - "8318:3000"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    environment:
+      CLIPROXY_CONFIG_PATH: /app/config.yaml
+      DATABASE_URL: postgresql://postgres:cliproxy@postgres:5432/cliproxy
+      PASSWORD: ""
+      CRON_SECRET: cliproxy-monitor-cron
+      AUTH_COOKIE_SECURE: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "const net=require('node:net');const fail=()=>process.exit(1);fetch('http://127.0.0.1:3000/api/management-url').then((res)=>{if(!res.ok)throw new Error('management-url');return new Promise((resolve,reject)=>{const socket=net.connect({host:'postgres',port:5432});socket.setTimeout(3000);socket.on('connect',()=>{socket.end();resolve();});socket.on('timeout',()=>{socket.destroy();reject(new Error('timeout'));});socket.on('error',reject);});}).then(()=>process.exit(0)).catch(fail);"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 25s
+    restart: unless-stopped
+
+  sync-cron:
+    image: alpine:3.20
+    depends_on:
+      - dashboard
+    environment:
+      CRON_SECRET: cliproxy-monitor-cron
+      CRON_SCHEDULE: "*/10 * * * *"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        apk add --no-cache curl tzdata >/dev/null
+
+        CRON_TIMEZONE="$$(cat /etc/timezone 2>/dev/null | tr -d '\r\n' || true)"
+        if [ -z "$${CRON_TIMEZONE}" ] && [ -L /etc/localtime ]; then
+          LINK_PATH="$$(readlink /etc/localtime || true)"
+          case "$${LINK_PATH}" in
+            *zoneinfo/*) CRON_TIMEZONE="$${LINK_PATH##*zoneinfo/}" ;;
+          esac
+        fi
+        if [ -z "$${CRON_TIMEZONE}" ]; then
+          CRON_TIMEZONE=Asia/Shanghai
+        fi
+
+        cat <<'SCRIPT' >/usr/local/bin/sync-cron.sh
+        #!/bin/sh
+        set -eu
+
+        SYNC_URL="http://dashboard:3000/api/sync"
+
+        if [ -z "$${CRON_SECRET:-}" ]; then
+          echo "[sync-cron] CRON_SECRET is empty" >&2
+          exit 1
+        fi
+
+        response_file="$$(mktemp)"
+        trap 'rm -f "$$response_file"' EXIT
+
+        if ! status_code="$$(curl --silent --show-error --output "$$response_file" --write-out '%{http_code}' --request POST --header "Authorization: Bearer $${CRON_SECRET}" --header "Content-Type: application/json" "$$SYNC_URL")"; then
+          curl_exit=$?
+          echo "[sync-cron] request failed for $${SYNC_URL} (curl exit $${curl_exit})" >&2
+          if [ -s "$$response_file" ]; then
+            cat "$$response_file" >&2
+          fi
+          exit "$$curl_exit"
+        fi
+
+        if [ "$$status_code" -lt 200 ] || [ "$$status_code" -ge 300 ]; then
+          echo "[sync-cron] /api/sync returned status $${status_code}" >&2
+          if [ -s "$$response_file" ]; then
+            cat "$$response_file" >&2
+          fi
+          exit 1
+        fi
+
+        echo "[sync-cron] /api/sync returned status $${status_code}"
+        cat "$$response_file"
+        SCRIPT
+
+        chmod +x /usr/local/bin/sync-cron.sh
+        printf 'CRON_TZ=%s\n%s /bin/sh /usr/local/bin/sync-cron.sh >> /proc/1/fd/1 2>> /proc/1/fd/2\n' "$${CRON_TIMEZONE}" "$${CRON_SCHEDULE}" >/etc/crontabs/root
+        exec crond -f -l 8
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: cliproxy
+      POSTGRES_DB: cliproxy
+    volumes:
+      - ./dashboard-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cliproxy"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  cli-proxy-api:
+    image: eceasy/cli-proxy-api-plus:latest
+    ports:
+      - "8317:8317"
+    volumes:
+      - ./config.yaml:/CLIProxyAPI/config.yaml
+      - ./auths:/root/.cli-proxy-api
+      - ./logs:/CLIProxyAPI/logs
+    restart: unless-stopped

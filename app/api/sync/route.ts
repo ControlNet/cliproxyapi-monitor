@@ -9,7 +9,7 @@ import { parseUsagePayload, toUsageRecords } from "@/lib/usage";
 
 export const runtime = "nodejs";
 
-const PASSWORD = process.env.PASSWORD || process.env.CLIPROXY_SECRET_KEY || "";
+const PASSWORD = config.password;
 const COOKIE_NAME = "dashboard_auth";
 const AUTH_FILES_TIMEOUT_MS = 15_000;
 const USAGE_TIMEOUT_MS = 60_000;

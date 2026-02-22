@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 function buildManagementUrl() {
   const raw = process.env.CLIPROXY_API_BASE_URL || "";
   if (!raw) return null;
-  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
   const root = withProtocol.replace(/\/v0\/management\/?$/i, "").replace(/\/$/, "");
   if (!root) return null;
   return `${root}/management.html`;

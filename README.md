@@ -1,38 +1,71 @@
 # CLIProxyAPI 数据看板
 
-基于 Next.js App Router + Drizzle + Postgres 的数据看板，用于自动拉取上游 CLIProxyAPI 使用数据，**持久化到数据库**，并进行数据可视化。
+该项目基于 [sxjeru/CLIProxyAPI-Monitor](https://github.com/sxjeru/CLIProxyAPI-Monitor) 修改而来。主要修改了：
+- 使用 Docker Compose 部署
+- 使用本地 PostgreSQL 作为数据库
+- 对于 input token 的展示，统一为 `regular-input` 语义（`input - cached`）。
 
-## 功能
-- `/api/sync` 拉取上游用量数据并去重入库（支持 GET/POST，有鉴权）
-- 前端表单可配置模型单价，亦支持从 models.dev 自动拉取价格信息（ [#17 @ZIC143](https://github.com/sxjeru/CLIProxyAPI-Monitor/pull/17) ）
-- 前端图表：日粒度折线图、小时粒度柱状图、模型费用列表等，支持时间范围、模型、Key、凭证筛选
-- 访问密码保护
+## Docker Compose 部署
 
-## 部署到 Vercel
-1. Fork 本仓库，创建 Vercel 项目并关联
-2. 在 Vercel 环境变量中填写：
+项目已支持单机 Compose 一体化部署（`dashboard + postgres + cli-proxy-api + sync-cron`），并默认使用 Docker Hub 预构建镜像。
 
-	| 环境变量 | 说明 | 备注 |
-	|---|---|---|
-	| CLIPROXY_SECRET_KEY | 登录 CLIProxyAPI 后台管理界面的密钥 | 无 |
-	| CLIPROXY_API_BASE_URL | 自部署的 CLIProxyAPI 根地址 | 如 `https://your-domain.com/` |
-	| DATABASE_URL | 数据库连接串（仅支持 Postgres） | 可直接使用 Vercel Neon |
-	| PASSWORD | 访问密码，同时用于调用 `/api/sync` | 可选；留空默认使用 `CLIPROXY_SECRET_KEY` |
-	| CRON_SECRET | 使用 Vercel Cron 时需填写 | 任意字符串均可；建议长度 ≥ 16 |
+### 1) 快速启动
 
-3. 部署后，可通过以下方式自动同步上游使用数据：
+参考 [router-for-me/CLIProxyAPIPlus](https://github.com/router-for-me/CLIProxyAPIPlus) 准备配置文件：
 
-	- 默认启用 Vercel Cron（ Pro 可设每小时，Hobby 每天同步一次，请见 [vercel.json](https://github.com/sxjeru/CLIProxyAPI-Monitor/blob/main/vercel.json) ）
-	- Cloudflare Worker / 其他定时器定期请求同步：可见 [cf-worker-sync.js](https://github.com/sxjeru/CLIProxyAPI-Monitor/blob/main/cf-worker-sync.js)
+```bash
+curl -o config.yaml https://raw.githubusercontent.com/router-for-me/CLIProxyAPIPlus/main/config.example.yaml
+curl -o docker-compose.yml https://raw.githubusercontent.com/ControlNet/cliproxyapi-monitor/refs/heads/main/docker-compose.yml
+```
 
-## 预览
+然后执行：
 
-|   |   |
-| --- | --- |
-| <img width="2186" height="1114" alt="image" src="https://github.com/user-attachments/assets/939424fb-1caa-4e80-a9a8-921d1770eb9f" /> | <img width="2112" height="1117" alt="image" src="https://github.com/user-attachments/assets/e5338679-7808-4f37-9753-41b559a3cee6" /> |
-<img width="2133" height="1098" alt="image" src="https://github.com/user-attachments/assets/99858753-f80f-4cd6-9331-087af35b21b3" />
-<img width="2166" height="973" alt="image" src="https://github.com/user-attachments/assets/6097da38-9dcc-46c0-a515-5904b81203d6" />
+```bash
+docker compose up -d
+```
 
+### 2) 本地 `docker build` / 推送镜像（可选）
+
+如果你不想使用默认的 `controlnet/cliproxyapi-monitor:latest`，可以自己构建并推送镜像：
+
+```bash
+# 在仓库根目录构建
+docker build -t <your-dockerhub-username>/cliproxyapi-monitor:latest .
+```
+
+### 3) Compose 内置配置项（直接改 `docker-compose.yml`）
+
+| 配置项 | 说明 | 当前默认 |
+|---|---|---|
+| `dashboard.image` | Docker Hub 预构建镜像 | `controlnet/cliproxyapi-monitor:latest` |
+| `dashboard.ports` | dashboard 宿主机端口（固定） | `8318:3000` |
+| `dashboard.environment.PASSWORD` | 看板访问密码；默认留空（将回退使用 config.yaml 的 secret） | `""` |
+| `dashboard.environment.AUTH_COOKIE_SECURE` | 登录 cookie 的 `Secure` 标记（HTTPS 建议改为 `true`） | `false` |
+
+### 4) 常用运维命令
+
+```bash
+# 触发一次数据库备份（默认保留 7 天）
+docker run --rm \
+  --network "${PROJECT:-$(basename "$PWD")}_default" \
+  -e POSTGRES_HOST=postgres \
+  -e POSTGRES_PORT=5432 \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=cliproxy \
+  -e POSTGRES_DB=cliproxy \
+  -e BACKUP_DIR=/backups/postgres \
+  -e BACKUP_RETENTION_DAYS=7 \
+  -v "$PWD/scripts/pg-backup.sh:/scripts/pg-backup.sh:ro" \
+  -v "$PWD/backups/postgres:/backups/postgres" \
+  postgres:16-alpine \
+  sh /scripts/pg-backup.sh
+
+# 手动重跑数据库迁移（通常不需要，排障用）
+docker run --rm \
+  --network "${PROJECT:-$(basename "$PWD")}_default" \
+  -e DATABASE_URL="postgresql://postgres:cliproxy@postgres:5432/cliproxy" \
+  controlnet/cliproxyapi-monitor:latest pnpm run migrate
+```
 
 ## Local DEV
 1. 安装依赖：`pnpm install`
