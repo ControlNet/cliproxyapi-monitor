@@ -11,7 +11,6 @@ type CachedOverview = {
     empty: boolean;
     days: number;
     timezone: string;
-    lastSyncAt: string | null;
     meta?: Awaited<ReturnType<typeof getOverview>>["meta"];
     filters?: Awaited<ReturnType<typeof getOverview>>["filters"];
   };
@@ -85,7 +84,7 @@ export async function GET(request: Request) {
       }
     }
 
-    const { overview, empty, days: appliedDays, meta, filters, timezone, lastSyncAt } = await getOverview(days, {
+    const { overview, empty, days: appliedDays, meta, filters, timezone } = await getOverview(days, {
       model: model || undefined,
       route: route || undefined,
       source: source || undefined,
@@ -97,7 +96,7 @@ export async function GET(request: Request) {
       timezone: config.timezone
     });
 
-    const payload = { overview, empty, days: appliedDays, meta, filters, timezone, lastSyncAt };
+    const payload = { overview, empty, days: appliedDays, meta, filters, timezone };
     setCached(cacheKey, payload);
     return NextResponse.json(payload, { status: 200 });
   } catch (error) {

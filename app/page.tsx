@@ -28,7 +28,6 @@ type OverviewAPIResponse = {
   empty: boolean;
   days: number;
   timezone?: string;
-  lastSyncAt?: string | null;
   meta?: OverviewMeta;
   filters?: { models: string[]; routes: string[]; names: string[] };
 };
@@ -567,7 +566,7 @@ export default function DashboardPage() {
             window.localStorage.setItem("lastSyncStatus", successMsg);
           }
         }
-          if (triggerRefresh) {
+          if (triggerRefresh && inserted > 0) {
             skipOverviewCacheRef.current = true;
             setRefreshTrigger((prev) => prev + 1);
           }
@@ -698,11 +697,40 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!ready) return;
 
-    const intervalId = window.setInterval(() => {
-      setRefreshTrigger((prev) => prev + 1);
-    }, 30_000);
+    let active = true;
+
+    const loadLastSync = async () => {
+      try {
+        const res = await fetch("/api/last-sync", { cache: "no-store" });
+        if (!res.ok || !active) return;
+
+        const data = (await res.json()) as { lastSyncAt?: string | null };
+        if (!active) return;
+
+        if (data.lastSyncAt) {
+          const parsed = new Date(data.lastSyncAt);
+          if (Number.isFinite(parsed.getTime())) {
+            setLastSyncTime(parsed);
+            if (typeof window !== "undefined") {
+              window.localStorage.setItem("lastSyncTime", parsed.toISOString());
+            }
+          }
+        } else {
+          setLastSyncTime(null);
+          if (typeof window !== "undefined") {
+            window.localStorage.removeItem("lastSyncTime");
+          }
+        }
+      } catch (error) {
+        console.warn("Failed to poll /api/last-sync", error);
+      }
+    };
+
+    loadLastSync();
+    const intervalId = window.setInterval(loadLastSync, 30_000);
 
     return () => {
+      active = false;
       window.clearInterval(intervalId);
     };
   }, [ready]);
@@ -763,20 +791,6 @@ export default function DashboardPage() {
         setBucketTimezone(data.timezone);
         setOverviewEmpty(Boolean(data.empty));
         setOverviewError(null);
-        if (data.lastSyncAt) {
-          const parsed = new Date(data.lastSyncAt);
-          if (Number.isFinite(parsed.getTime())) {
-            setLastSyncTime(parsed);
-            if (typeof window !== "undefined") {
-              window.localStorage.setItem("lastSyncTime", parsed.toISOString());
-            }
-          }
-        } else {
-          setLastSyncTime(null);
-          if (typeof window !== "undefined") {
-            window.localStorage.removeItem("lastSyncTime");
-          }
-        }
         setPage(data.meta?.page ?? 1);
         setModelOptions(Array.from(new Set(data.filters?.models ?? [])));
         setRouteOptions(Array.from(new Set(data.filters?.routes ?? [])));

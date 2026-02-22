@@ -41,12 +41,6 @@ type HourAggRow = {
 };
 type OverviewMeta = { page: number; pageSize: number; totalModels: number; totalPages: number };
 
-function toDateOrNull(value: unknown): Date | null {
-  if (!value) return null;
-  const date = value instanceof Date ? value : new Date(String(value));
-  return Number.isFinite(date.getTime()) ? date : null;
-}
-
 function toNumber(value: unknown): number {
   const num = Number(value ?? 0);
   return Number.isFinite(num) ? num : 0;
@@ -93,7 +87,7 @@ function normalizePageSize(value?: number | null) {
 export async function getOverview(
   daysInput?: number,
   opts?: { model?: string | null; route?: string | null; source?: string | null; name?: string | null; page?: number | null; pageSize?: number | null; start?: string | Date | null; end?: string | Date | null; timezone?: string | null }
-): Promise<{ overview: UsageOverview; empty: boolean; days: number; meta: OverviewMeta; filters: { models: string[]; routes: string[]; sources: string[]; names: string[] }; timezone: string; lastSyncAt: string | null }> {
+): Promise<{ overview: UsageOverview; empty: boolean; days: number; meta: OverviewMeta; filters: { models: string[]; routes: string[]; sources: string[]; names: string[] }; timezone: string }> {
   const startDate = parseDateInput(opts?.start);
   const endDate = parseDateInput(opts?.end);
   const hasCustomRange = startDate && endDate && endDate >= startDate;
@@ -247,14 +241,6 @@ export async function getOverview(
     .groupBy(credentialNameExpr)
     .orderBy(credentialNameExpr);
 
-  const lastUsageSyncPromise: Promise<{ lastSyncAt: Date | null }[]> = db
-    .select({ lastSyncAt: sql<Date | null>`max(${usageRecords.syncedAt})` })
-    .from(usageRecords);
-
-  const lastAuthSyncPromise: Promise<{ lastSyncAt: Date | null }[]> = db
-    .select({ lastSyncAt: sql<Date | null>`max(${authFileMappings.syncedAt})` })
-    .from(authFileMappings);
-
   const [
     totalsRowResult,
     priceRows,
@@ -266,9 +252,7 @@ export async function getOverview(
     availableModelsRows,
     availableRoutesRows,
     availableSourcesRows,
-    availableNamesRows,
-    lastUsageSyncRows,
-    lastAuthSyncRows
+    availableNamesRows
   ] = await Promise.all([
     totalsPromise,
     pricePromise,
@@ -280,16 +264,8 @@ export async function getOverview(
     availableModelsPromise,
     availableRoutesPromise,
     availableSourcesPromise,
-    availableNamesPromise,
-    lastUsageSyncPromise,
-    lastAuthSyncPromise
+    availableNamesPromise
   ]);
-
-  const usageLastSync = toDateOrNull(lastUsageSyncRows[0]?.lastSyncAt ?? null);
-  const authLastSync = toDateOrNull(lastAuthSyncRows[0]?.lastSyncAt ?? null);
-  const lastSyncAt = usageLastSync && authLastSync
-    ? (usageLastSync.getTime() >= authLastSync.getTime() ? usageLastSync : authLastSync)
-    : usageLastSync ?? authLastSync;
 
   const totalsRow =
     totalsRowResult[0] ?? { totalRequests: 0, totalTokens: 0, inputTokens: 0, regularInputTokens: 0, outputTokens: 0, reasoningTokens: 0, cachedTokens: 0, successCount: 0, failureCount: 0 };
@@ -405,7 +381,6 @@ export async function getOverview(
     days,
     meta: { page, pageSize, totalModels, totalPages },
     filters,
-    timezone: tz,
-    lastSyncAt: lastSyncAt ? lastSyncAt.toISOString() : null
+    timezone: tz
   };
 }
