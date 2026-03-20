@@ -13,6 +13,16 @@ const PASSWORD = config.password;
 const COOKIE_NAME = "dashboard_auth";
 const AUTH_FILES_TIMEOUT_MS = 15_000;
 const USAGE_TIMEOUT_MS = 60_000;
+const INCREMENTAL_LOOKBACK_MINUTES = 20;
+const USAGE_INSERT_COLUMNS_PER_ROW = 13;
+const USAGE_INSERT_PARAMETER_SOFT_LIMIT = 2_000;
+const USAGE_INSERT_BATCH_SIZE = Math.max(
+  1,
+  Math.floor(USAGE_INSERT_PARAMETER_SOFT_LIMIT / USAGE_INSERT_COLUMNS_PER_ROW)
+);
+const FULL_SYNC_QUERY_VALUES = new Set(["1", "true", "yes", "on"]);
+
+type UsageRow = typeof usageRecords.$inferInsert;
 
 function unauthorized() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -20,6 +30,23 @@ function unauthorized() {
 
 function missingPassword() {
   return NextResponse.json({ error: "PASSWORD is missing" }, { status: 501 });
+}
+
+function parseDate(value: unknown): Date | null {
+  if (!value) return null;
+  const parsed = value instanceof Date ? value : new Date(String(value));
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
+function isFullSyncRequest(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const full = searchParams.get("full");
+  if (!full) return false;
+  return FULL_SYNC_QUERY_VALUES.has(full.trim().toLowerCase());
+}
+
+function usageKey(route: string, model: string, source: string) {
+  return `${route}\u0001${model}\u0001${source}`;
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
@@ -102,6 +129,62 @@ async function syncAuthFileMappings(pulledAt: Date) {
   return rows.length;
 }
 
+function isBindProtocolError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error ? (error as { code?: unknown }).code : undefined;
+  if (code === "08P01") return true;
+
+  const message = "message" in error ? (error as { message?: unknown }).message : undefined;
+  return typeof message === "string" && message.includes("bind message");
+}
+
+async function insertUsageRows(rows: UsageRow[]) {
+  if (rows.length === 0) return 0;
+
+  const insertBatch = async (batch: UsageRow[]) => {
+    const insertedRows = await db
+      .insert(usageRecords)
+      .values(batch)
+      .onConflictDoNothing({
+        target: [usageRecords.occurredAt, usageRecords.route, usageRecords.model, usageRecords.source]
+      })
+      .returning({ id: usageRecords.id });
+    return insertedRows.length;
+  };
+
+  const insertBatchWithRetry = async (batch: UsageRow[]): Promise<number> => {
+    try {
+      return await insertBatch(batch);
+    } catch (error) {
+      if (!isBindProtocolError(error) || batch.length <= 1) {
+        throw error;
+      }
+
+      const middle = Math.ceil(batch.length / 2);
+      const left = batch.slice(0, middle);
+      const right = batch.slice(middle);
+
+      console.warn("/api/sync usage insert hit bind protocol issue, retrying with smaller batch", {
+        failedBatchSize: batch.length,
+        leftBatchSize: left.length,
+        rightBatchSize: right.length
+      });
+
+      const leftInserted = await insertBatchWithRetry(left);
+      const rightInserted = await insertBatchWithRetry(right);
+      return leftInserted + rightInserted;
+    }
+  };
+
+  let inserted = 0;
+  for (let offset = 0; offset < rows.length; offset += USAGE_INSERT_BATCH_SIZE) {
+    const chunk = rows.slice(offset, offset + USAGE_INSERT_BATCH_SIZE);
+    inserted += await insertBatchWithRetry(chunk);
+  }
+
+  return inserted;
+}
+
 async function performSync(request: Request) {
   if (!config.password && !config.cronSecret && !PASSWORD) return missingPassword();
   if (!(await isAuthorized(request))) return unauthorized();
@@ -146,7 +229,7 @@ async function performSync(request: Request) {
     );
   }
 
-  let payload;
+  let payload: ReturnType<typeof parseUsagePayload>;
   try {
     const json = await response.json();
     payload = parseUsagePayload(json);
@@ -159,6 +242,43 @@ async function performSync(request: Request) {
   }
 
   const rows = toUsageRecords(payload, pulledAt);
+
+  const fullSync = isFullSyncRequest(request);
+  let rowsForInsert = rows;
+  if (!fullSync && rows.length > 0) {
+    const latestOccurredRows = await db
+      .select({
+        route: usageRecords.route,
+        model: usageRecords.model,
+        source: usageRecords.source,
+        latestOccurredAt: sql<Date | null>`max(${usageRecords.occurredAt})`
+      })
+      .from(usageRecords)
+      .groupBy(usageRecords.route, usageRecords.model, usageRecords.source);
+
+    const latestByKey = new Map<string, Date>();
+    for (const row of latestOccurredRows) {
+      const latestOccurredAt = parseDate(row.latestOccurredAt);
+      if (!latestOccurredAt) continue;
+      latestByKey.set(usageKey(row.route, row.model, row.source), latestOccurredAt);
+    }
+
+    rowsForInsert = rows.filter((row) => {
+      const occurredAt = parseDate(row.occurredAt);
+      if (!occurredAt) return true;
+
+      const key = usageKey(row.route, row.model, row.source ?? "");
+      const latestOccurredAt = latestByKey.get(key);
+      if (!latestOccurredAt) return true;
+
+      const windowStart = new Date(
+        latestOccurredAt.getTime() - INCREMENTAL_LOOKBACK_MINUTES * 60_000
+      );
+      return occurredAt > windowStart;
+    });
+  }
+
+  const filteredOut = rows.length - rowsForInsert.length;
 
   let authFilesSynced = 0;
   let authFilesWarning: string | undefined;
@@ -176,17 +296,32 @@ async function performSync(request: Request) {
       inserted: 0,
       message: "No usage data",
       authFilesSynced,
+      attempted: 0,
+      insertAttempted: 0,
+      filteredOut: 0,
+      fullSync,
       ...(authFilesWarning ? { authFilesWarning } : {})
     });
   }
 
-  let insertedRows: Array<{ id: number }>;
+  if (rowsForInsert.length === 0) {
+    return NextResponse.json({
+      status: "ok",
+      inserted: 0,
+      message: "No new usage data after incremental filter",
+      authFilesSynced,
+      attempted: rows.length,
+      insertAttempted: 0,
+      filteredOut,
+      fullSync,
+      lookbackMinutes: INCREMENTAL_LOOKBACK_MINUTES,
+      ...(authFilesWarning ? { authFilesWarning } : {})
+    });
+  }
+
+  let inserted = 0;
   try {
-    insertedRows = await db
-      .insert(usageRecords)
-      .values(rows)
-      .onConflictDoNothing({ target: [usageRecords.occurredAt, usageRecords.route, usageRecords.model, usageRecords.source] })
-      .returning({ id: usageRecords.id });
+    inserted = await insertUsageRows(rowsForInsert);
   } catch (dbError) {
     console.error("/api/sync database insert failed:", dbError);
     return NextResponse.json(
@@ -197,8 +332,7 @@ async function performSync(request: Request) {
 
   // Vercel Postgres may return an empty array even when rows are inserted with RETURNING + ON CONFLICT DO NOTHING.
   // Fall back to counting rows synced in this run (identified by the shared pulledAt timestamp) to avoid reporting 0.
-  let inserted = insertedRows.length;
-  if (inserted === 0 && rows.length > 0) {
+  if (inserted === 0 && rowsForInsert.length > 0) {
     const fallback = await db
       .select({ count: sql<number>`count(*)` })
       .from(usageRecords)
@@ -210,6 +344,10 @@ async function performSync(request: Request) {
     status: "ok",
     inserted,
     attempted: rows.length,
+    insertAttempted: rowsForInsert.length,
+    filteredOut,
+    fullSync,
+    lookbackMinutes: INCREMENTAL_LOOKBACK_MINUTES,
     authFilesSynced,
     ...(authFilesWarning ? { authFilesWarning } : {})
   });
