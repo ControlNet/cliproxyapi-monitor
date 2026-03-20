@@ -19,8 +19,4 @@ backups/
 # CLIProxyAPI runtime config (may contain secrets)
 config.yaml
 .sisyphus/
-.beads/
-
-# Dolt database files (added by bd init)
-.dolt/
 *.db
