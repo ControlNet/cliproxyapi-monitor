@@ -148,6 +148,195 @@ function buildHourlyLineStyle(pointCount: number, baseStrokeWidth: number) {
   };
 }
 
+type PieMode = "tokens" | "requests";
+
+type ModelUsagePieChartProps = {
+  models: UsageOverview["models"];
+  pieMode: PieMode;
+  darkMode: boolean;
+  fullscreen?: boolean;
+};
+
+function ModelUsagePieChart({ models, pieMode, darkMode, fullscreen = false }: ModelUsagePieChartProps) {
+  const [hoveredPieIndex, setHoveredPieIndex] = useState<number | null>(null);
+  const [pieTooltipOpen, setPieTooltipOpen] = useState(false);
+  const pieChartContainerRef = useRef<HTMLDivElement | null>(null);
+  const pieLegendClearTimerRef = useRef<number | null>(null);
+
+  const cancelPieLegendClear = useCallback(() => {
+    if (pieLegendClearTimerRef.current !== null) {
+      window.clearTimeout(pieLegendClearTimerRef.current);
+      pieLegendClearTimerRef.current = null;
+    }
+  }, []);
+
+  const closePieTooltip = useCallback(() => {
+    cancelPieLegendClear();
+    setPieTooltipOpen(false);
+    setHoveredPieIndex(null);
+  }, [cancelPieLegendClear]);
+
+  const schedulePieLegendClear = useCallback(() => {
+    cancelPieLegendClear();
+    pieLegendClearTimerRef.current = window.setTimeout(() => {
+      setHoveredPieIndex(null);
+      pieLegendClearTimerRef.current = null;
+    }, 60);
+  }, [cancelPieLegendClear]);
+
+  useEffect(() => {
+    if (!pieTooltipOpen) return;
+
+    const isInsideRect = (rect: DOMRect | undefined | null, x: number, y: number) => {
+      if (!rect) return false;
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      const rect = pieChartContainerRef.current?.getBoundingClientRect();
+      if (!isInsideRect(rect, e.clientX, e.clientY)) closePieTooltip();
+    };
+
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    window.addEventListener("blur", closePieTooltip);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("blur", closePieTooltip);
+    };
+  }, [pieTooltipOpen, closePieTooltip]);
+
+  useEffect(() => () => cancelPieLegendClear(), [cancelPieLegendClear]);
+
+  const legendItems = useMemo(() => {
+    const total = models.reduce((sum, item) => sum + item[pieMode], 0);
+    const indexByModel = new Map(models.map((item, index) => [item.model, index]));
+
+    return [...models]
+      .sort((a, b) => b[pieMode] - a[pieMode])
+      .map((item) => {
+        const originalIndex = indexByModel.get(item.model) ?? 0;
+        const percent = total > 0 ? (item[pieMode] / total) * 100 : 0;
+        return { item, originalIndex, percent };
+      });
+  }, [models, pieMode]);
+
+  const containerClassName = fullscreen ? "flex-1" : "shrink-0 w-64";
+  const legendClassName = fullscreen ? "w-80 overflow-y-auto pr-2 space-y-2 custom-scrollbar" : "flex-1 overflow-y-auto pr-2 space-y-1 custom-scrollbar";
+  const outerRadius = fullscreen ? "75%" : "85%";
+  const innerRadius = fullscreen ? "40%" : "45%";
+
+  return (
+    <>
+      <div
+        ref={pieChartContainerRef}
+        className={containerClassName}
+        onPointerLeave={closePieTooltip}
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
+            <Pie
+              data={models}
+              dataKey={pieMode}
+              nameKey="model"
+              cx="50%"
+              cy="50%"
+              outerRadius={outerRadius}
+              innerRadius={innerRadius}
+              isAnimationActive={false}
+              onMouseEnter={(_, index) => {
+                setHoveredPieIndex(index);
+                setPieTooltipOpen(true);
+              }}
+              onMouseLeave={closePieTooltip}
+            >
+              {models.map((_, index) => (
+                <Cell
+                  key={`${fullscreen ? "fs" : "card"}-cell-${index}`}
+                  fill={PIE_COLORS[index % PIE_COLORS.length]}
+                  fillOpacity={hoveredPieIndex === null || hoveredPieIndex === index ? 1 : 0.3}
+                  style={{ transition: "fill-opacity 0.12s linear" }}
+                />
+              ))}
+            </Pie>
+            <Tooltip
+              position={{ x: 0, y: 0 }}
+              wrapperStyle={{ zIndex: 1000, pointerEvents: "none" }}
+              content={({ active, payload }) => {
+                if (!pieTooltipOpen || hoveredPieIndex === null) return null;
+                if (!active || !payload || !payload[0]) return null;
+                const data = payload[0].payload;
+                return (
+                  <div
+                    className="rounded-xl px-4 py-3 shadow-xl backdrop-blur-sm"
+                    style={{
+                      backgroundColor: darkMode ? "rgba(15, 23, 42, 0.7)" : "rgba(255, 255, 255, 0.8)",
+                      border: `1px solid ${darkMode ? "rgba(148, 163, 184, 0.4)" : "rgba(203, 213, 225, 0.6)"}`,
+                      color: darkMode ? "#f8fafc" : "#0f172a"
+                    }}
+                  >
+                    <p className={`mb-2 font-medium text-sm ${darkMode ? "text-slate-50" : "text-slate-900"}`}>{data.model}</p>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="text-blue-400 font-medium">请求数:</span>
+                        <span className={darkMode ? "text-slate-50" : "text-slate-700"}>{formatNumberWithCommas(data.requests)}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="text-emerald-400 font-medium">Tokens:</span>
+                        <span className={darkMode ? "text-slate-50" : "text-slate-700"}>{formatNumberWithCommas(data.tokens)}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      <div className={legendClassName}>
+        {legendItems.map(({ item, originalIndex, percent }) => {
+          const isHighlighted = hoveredPieIndex === null || hoveredPieIndex === originalIndex;
+          return (
+            <div
+              key={item.model}
+              className={`rounded-lg ${fullscreen ? "p-3" : "p-2"} transition cursor-pointer ${
+                isHighlighted ? (darkMode ? "bg-slate-700/30" : "bg-slate-100") : "opacity-40"
+              } ${darkMode ? "hover:bg-slate-700/50" : "hover:bg-slate-200"}`}
+              onMouseEnter={() => {
+                cancelPieLegendClear();
+                setHoveredPieIndex(originalIndex);
+                setPieTooltipOpen(false);
+              }}
+              onMouseLeave={schedulePieLegendClear}
+              style={{ transition: "all 0.2s" }}
+            >
+              <div className={`flex items-center gap-2 ${fullscreen ? "mb-1.5" : "mb-1"}`}>
+                <div
+                  className={`${fullscreen ? "w-4 h-4" : "w-3 h-3"} rounded-full shrink-0 transition-all duration-200 ${
+                    isHighlighted && hoveredPieIndex === originalIndex ? "ring-2 ring-offset-1" : ""
+                  }`}
+                  style={{
+                    backgroundColor: PIE_COLORS[originalIndex % PIE_COLORS.length],
+                    "--tw-ring-color": isHighlighted && hoveredPieIndex === originalIndex ? PIE_COLORS[originalIndex % PIE_COLORS.length] : "transparent",
+                    transform: isHighlighted && hoveredPieIndex === originalIndex ? "scale(1.2)" : "scale(1)"
+                  } as React.CSSProperties}
+                />
+                <p className={`${fullscreen ? "text-base" : "text-sm"} font-medium truncate flex-1 ${darkMode ? "text-slate-200" : "text-slate-800"}`} title={item.model}>
+                  {item.model}
+                </p>
+              </div>
+              <div className={`${fullscreen ? "text-sm ml-6" : "text-xs ml-5"} ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
+                <span className="font-semibold">{percent.toFixed(1)}%</span>
+                <span className="mx-1.5">·</span>
+                <span>{pieMode === "tokens" ? formatCompactNumber(item.tokens) : formatNumberWithCommas(item.requests)} {pieMode === "tokens" ? "tokens" : "次"}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
 export default function DashboardPage() {
   const [mounted, setMounted] = useState(false);
   const [prices, setPrices] = useState<ModelPrice[]>([]);
@@ -231,16 +420,11 @@ export default function DashboardPage() {
   const [pendingUsageRequests, setPendingUsageRequests] = useState(0);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [ready, setReady] = useState(false);
-  const [pieMode, setPieMode] = useState<"tokens" | "requests">("tokens");
+  const [pieMode, setPieMode] = useState<PieMode>("tokens");
   const [darkMode, setDarkMode] = useState(true);
   const [editingPrice, setEditingPrice] = useState<ModelPrice | null>(null);
   const [editForm, setEditForm] = useState<PriceForm>({ model: "", inputPricePer1M: "", cachedInputPricePer1M: "", outputPricePer1M: "" });
   const [fullscreenChart, setFullscreenChart] = useState<"trend" | "pie" | "stacked" | null>(null);
-  const [hoveredPieIndex, setHoveredPieIndex] = useState<number | null>(null);
-  const [pieTooltipOpen, setPieTooltipOpen] = useState(false);
-  const pieChartContainerRef = useRef<HTMLDivElement | null>(null);
-  const pieChartFullscreenContainerRef = useRef<HTMLDivElement | null>(null);
-  const pieLegendClearTimerRef = useRef<number | null>(null);
   const syncingRef = useRef(false);
   const skipOverviewCacheRef = useRef(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
@@ -383,54 +567,6 @@ export default function DashboardPage() {
       rightAxisVisible
     };
   }, [trendVisible, darkMode]);
-
-  const cancelPieLegendClear = useCallback(() => {
-    if (pieLegendClearTimerRef.current !== null) {
-      window.clearTimeout(pieLegendClearTimerRef.current);
-      pieLegendClearTimerRef.current = null;
-    }
-  }, []);
-
-  const schedulePieLegendClear = useCallback(() => {
-    cancelPieLegendClear();
-    pieLegendClearTimerRef.current = window.setTimeout(() => {
-      setHoveredPieIndex(null);
-      pieLegendClearTimerRef.current = null;
-    }, 60); // 扇形图例悬停延时，避免缝隙导致频繁闪烁
-  }, [cancelPieLegendClear]);
-
-  useEffect(() => {
-    if (!pieTooltipOpen) return;
-
-    const isInsideRect = (rect: DOMRect | undefined | null, x: number, y: number) => {
-      if (!rect) return false;
-      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-    };
-
-    const closeTooltip = () => {
-      cancelPieLegendClear();
-      setPieTooltipOpen(false);
-      setHoveredPieIndex(null);
-    };
-
-    const onPointerMove = (e: PointerEvent) => {
-      const x = e.clientX;
-      const y = e.clientY;
-      const mainRect = pieChartContainerRef.current?.getBoundingClientRect();
-      const fsRect = pieChartFullscreenContainerRef.current?.getBoundingClientRect();
-      const inside = isInsideRect(mainRect, x, y) || isInsideRect(fsRect, x, y);
-      if (!inside) closeTooltip();
-    };
-
-    const onWindowBlur = () => closeTooltip();
-
-    window.addEventListener("pointermove", onPointerMove, { passive: true });
-    window.addEventListener("blur", onWindowBlur);
-    return () => {
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("blur", onWindowBlur);
-    };
-  }, [pieTooltipOpen, cancelPieLegendClear]);
 
   // 关闭syncStatus toast
   const closeSyncStatus = useCallback(() => {
@@ -1648,129 +1784,12 @@ export default function DashboardPage() {
                 </div>
               ) : (
               <>
-                {/* 饼图 */}
-                <div
-                  ref={pieChartContainerRef}
-                  className="shrink-0 w-64"
-                  onPointerLeave={() => {
-                    cancelPieLegendClear();
-                    setPieTooltipOpen(false);
-                    setHoveredPieIndex(null);
-                  }}
-                >
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
-                      <Pie
-                        data={overviewData.models}
-                        dataKey={pieMode}
-                        nameKey="model"
-                        cx="50%"
-                        cy="50%"
-                        outerRadius="85%"
-                        innerRadius="45%"
-                        animationDuration={500}
-                        onMouseEnter={(_, index) => {
-                          setHoveredPieIndex(index);
-                          setPieTooltipOpen(true);
-                        }}
-                        onMouseLeave={() => {
-                          setHoveredPieIndex(null);
-                          setPieTooltipOpen(false);
-                        }}
-                      >
-                        {overviewData.models.map((_, index) => (
-                          <Cell 
-                            key={`cell-${index}`} 
-                            fill={PIE_COLORS[index % PIE_COLORS.length]}
-                            fillOpacity={hoveredPieIndex === null || hoveredPieIndex === index ? 1 : 0.3}
-                            style={{ transition: 'fill-opacity 0.2s' }}
-                          />
-                        ))}
-                      </Pie>
-                      <Tooltip
-                        position={{ x: 0, y: 0 }}
-                        wrapperStyle={{ zIndex: 1000, pointerEvents: "none" }}
-                        content={({ active, payload }) => {
-                          if (!pieTooltipOpen || hoveredPieIndex === null) return null;
-                          if (!active || !payload || !payload[0]) return null;
-                          const data = payload[0].payload;
-                          return (
-                            <div
-                              className="rounded-xl px-4 py-3 shadow-xl backdrop-blur-sm"
-                              style={{ 
-                                backgroundColor: darkMode ? "rgba(15, 23, 42, 0.7)" : "rgba(255, 255, 255, 0.8)", 
-                                border: `1px solid ${darkMode ? "rgba(148, 163, 184, 0.4)" : "rgba(203, 213, 225, 0.6)"}`,
-                                color: darkMode ? "#f8fafc" : "#0f172a"
-                              }}
-                            >
-                              <p className={`mb-2 font-medium text-sm ${darkMode ? "text-slate-50" : "text-slate-900"}`}>{data.model}</p>
-                              <div className="space-y-1">
-                                <div className="flex items-center gap-2 text-sm">
-                                  <span className="text-blue-400 font-medium">请求数:</span>
-                                  <span className={darkMode ? "text-slate-50" : "text-slate-700"}>{formatNumberWithCommas(data.requests)}</span>
-                                </div>
-                                <div className="flex items-center gap-2 text-sm">
-                                  <span className="text-emerald-400 font-medium">Tokens:</span>
-                                  <span className={darkMode ? "text-slate-50" : "text-slate-700"}>{formatNumberWithCommas(data.tokens)}</span>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        }}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                {/* 自定义图例 */}
-                <div className="flex-1 overflow-y-auto pr-2 space-y-1 custom-scrollbar">
-                  {[...overviewData.models]
-                    .sort((a, b) => b[pieMode] - a[pieMode])
-                    .map((item, sortedIndex) => {
-                      const originalIndex = overviewData.models.findIndex(m => m.model === item.model);
-                      const total = overviewData.models.reduce((sum, m) => sum + m[pieMode], 0);
-                      const percent = total > 0 ? (item[pieMode] / total) * 100 : 0;
-                      const isHighlighted = hoveredPieIndex === null || hoveredPieIndex === originalIndex;
-                      return (
-                        <div 
-                          key={item.model} 
-                          className={`rounded-lg p-2 transition cursor-pointer ${
-                            isHighlighted 
-                              ? darkMode ? "bg-slate-700/30" : "bg-slate-100" 
-                              : "opacity-40"
-                          } ${darkMode ? "hover:bg-slate-700/50" : "hover:bg-slate-200"}`}
-                          onMouseEnter={() => {
-                            cancelPieLegendClear();
-                            setHoveredPieIndex(originalIndex);
-                          }}
-                          onMouseLeave={() => {
-                            schedulePieLegendClear();
-                          }}
-                          style={{ transition: 'all 0.2s' }}
-                        >
-                          <div className="flex items-center gap-2 mb-1">
-                            <div 
-                              className={`w-3 h-3 rounded-full shrink-0 transition-all duration-200 ${
-                                isHighlighted && hoveredPieIndex === originalIndex ? 'ring-2 ring-offset-1' : ''
-                              }`}
-                              style={{ 
-                                backgroundColor: PIE_COLORS[originalIndex % PIE_COLORS.length],
-                                '--tw-ring-color': isHighlighted && hoveredPieIndex === originalIndex ? PIE_COLORS[originalIndex % PIE_COLORS.length] : 'transparent',
-                                transform: isHighlighted && hoveredPieIndex === originalIndex ? 'scale(1.2)' : 'scale(1)'
-                              } as React.CSSProperties} 
-                            />
-                            <p className={`text-sm font-medium truncate flex-1 ${darkMode ? "text-slate-200" : "text-slate-800"}`} title={item.model}>
-                              {item.model}
-                            </p>
-                        </div>
-                        <div className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-600"} ml-5`}>
-                          <span className="font-semibold">{percent.toFixed(1)}%</span>
-                          <span className="mx-1.5">·</span>
-                          <span>{pieMode === "tokens" ? formatCompactNumber(item.tokens) : formatNumberWithCommas(item.requests)} {pieMode === "tokens" ? "tokens" : "次"}</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                <ModelUsagePieChart
+                  key={`dashboard-${pieMode}-${overviewData.models.map((item) => `${item.model}:${item.requests}:${item.tokens}`).join("|")}`}
+                  models={overviewData.models}
+                  pieMode={pieMode}
+                  darkMode={darkMode}
+                />
               </>
             )}
             </div>
@@ -2394,129 +2413,13 @@ export default function DashboardPage() {
                 </div>
               </div>
               <div className="flex gap-6 flex-1">
-                {/* 饼图 */}
-                <div
-                  ref={pieChartFullscreenContainerRef}
-                  className="flex-1"
-                  onPointerLeave={() => {
-                    cancelPieLegendClear();
-                    setPieTooltipOpen(false);
-                    setHoveredPieIndex(null);
-                  }}
-                >
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
-                      <Pie
-                        data={overviewData.models}
-                        dataKey={pieMode}
-                        nameKey="model"
-                        cx="50%"
-                        cy="50%"
-                        outerRadius="75%"
-                        innerRadius="40%"
-                        animationDuration={500}
-                        onMouseEnter={(_, index) => {
-                          setHoveredPieIndex(index);
-                          setPieTooltipOpen(true);
-                        }}
-                        onMouseLeave={() => {
-                          setHoveredPieIndex(null);
-                          setPieTooltipOpen(false);
-                        }}
-                      >
-                        {overviewData.models.map((_, index) => (
-                          <Cell 
-                            key={`cell-fs-${index}`} 
-                            fill={PIE_COLORS[index % PIE_COLORS.length]}
-                            fillOpacity={hoveredPieIndex === null || hoveredPieIndex === index ? 1 : 0.3}
-                            style={{ transition: 'fill-opacity 0.2s' }}
-                          />
-                        ))}
-                      </Pie>
-                      <Tooltip 
-                        position={{ x: 0, y: 0 }}
-                        wrapperStyle={{ zIndex: 1000, pointerEvents: "none" }}
-                        content={({ active, payload }) => {
-                          if (!pieTooltipOpen || hoveredPieIndex === null) return null;
-                          if (!active || !payload || !payload[0]) return null;
-                          const data = payload[0].payload;
-                          return (
-                            <div
-                              className="rounded-xl px-4 py-3 shadow-xl backdrop-blur-sm"
-                              style={{ 
-                                backgroundColor: darkMode ? "rgba(15, 23, 42, 0.7)" : "rgba(255, 255, 255, 0.8)", 
-                                border: `1px solid ${darkMode ? "rgba(148, 163, 184, 0.4)" : "rgba(203, 213, 225, 0.6)"}`,
-                                color: darkMode ? "#f8fafc" : "#0f172a"
-                              }}
-                            >
-                              <p className={`mb-2 font-medium text-sm ${darkMode ? "text-slate-50" : "text-slate-900"}`}>{data.model}</p>
-                              <div className="space-y-1">
-                                <div className="flex items-center gap-2 text-sm">
-                                  <span className="text-blue-400 font-medium">请求数:</span>
-                                  <span className={darkMode ? "text-slate-50" : "text-slate-700"}>{formatNumberWithCommas(data.requests)}</span>
-                                </div>
-                                <div className="flex items-center gap-2 text-sm">
-                                  <span className="text-emerald-400 font-medium">Tokens:</span>
-                                  <span className={darkMode ? "text-slate-50" : "text-slate-700"}>{formatNumberWithCommas(data.tokens)}</span>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        }}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                {/* 自定义图例 */}
-                <div className="w-80 overflow-y-auto pr-2 space-y-2 custom-scrollbar">
-                  {[...overviewData.models]
-                    .sort((a, b) => b[pieMode] - a[pieMode])
-                    .map((item) => {
-                      const originalIndex = overviewData.models.findIndex(m => m.model === item.model);
-                      const total = overviewData.models.reduce((sum, m) => sum + m[pieMode], 0);
-                      const percent = total > 0 ? (item[pieMode] / total) * 100 : 0;
-                      const isHighlighted = hoveredPieIndex === null || hoveredPieIndex === originalIndex;
-                      return (
-                        <div 
-                          key={item.model} 
-                          className={`rounded-lg p-3 transition cursor-pointer ${
-                            isHighlighted 
-                              ? darkMode ? "bg-slate-700/30" : "bg-slate-100" 
-                              : "opacity-40"
-                          } ${darkMode ? "hover:bg-slate-700/50" : "hover:bg-slate-200"}`}
-                          onMouseEnter={() => {
-                            cancelPieLegendClear();
-                            setHoveredPieIndex(originalIndex);
-                          }}
-                          onMouseLeave={() => {
-                            schedulePieLegendClear();
-                          }}
-                          style={{ transition: 'all 0.2s' }}
-                        >
-                          <div className="flex items-center gap-2 mb-1.5">
-                            <div 
-                              className={`w-4 h-4 rounded-full shrink-0 transition-all duration-200 ${
-                                isHighlighted && hoveredPieIndex === originalIndex ? 'ring-2 ring-offset-1' : ''
-                              }`}
-                              style={{ 
-                                backgroundColor: PIE_COLORS[originalIndex % PIE_COLORS.length],
-                                '--tw-ring-color': isHighlighted && hoveredPieIndex === originalIndex ? PIE_COLORS[originalIndex % PIE_COLORS.length] : 'transparent',
-                                transform: isHighlighted && hoveredPieIndex === originalIndex ? 'scale(1.2)' : 'scale(1)'
-                              } as React.CSSProperties}
-                            />
-                            <p className={`text-base font-medium truncate flex-1 ${darkMode ? "text-slate-200" : "text-slate-800"}`} title={item.model}>
-                              {item.model}
-                            </p>
-                          </div>
-                          <div className={`text-sm ${darkMode ? "text-slate-400" : "text-slate-600"} ml-6`}>
-                            <span className="font-semibold">{percent.toFixed(1)}%</span>
-                            <span className="mx-1.5">·</span>
-                            <span>{pieMode === "tokens" ? formatCompactNumber(item.tokens) : formatNumberWithCommas(item.requests)} {pieMode === "tokens" ? "tokens" : "次"}</span>
-                          </div>
-                        </div>
-                    );
-                  })}
-                </div>
+                <ModelUsagePieChart
+                  key={`fullscreen-${pieMode}-${overviewData.models.map((item) => `${item.model}:${item.requests}:${item.tokens}`).join("|")}`}
+                  models={overviewData.models}
+                  pieMode={pieMode}
+                  darkMode={darkMode}
+                  fullscreen
+                />
               </div>
             </div>
           )}
