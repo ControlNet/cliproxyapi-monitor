@@ -26,7 +26,7 @@ function detectSystemTimezone(): string {
 const baseUrl = normalizeBaseUrl(process.env.CLIPROXY_API_BASE_URL);
 const password = process.env.PASSWORD || process.env.CLIPROXY_SECRET_KEY || "";
 const cronSecret = process.env.CRON_SECRET || "";
-const postgresUrl = process.env.DATABASE_URL || "";
+const postgresUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || "";
 const timezone = detectSystemTimezone();
 
 export const config = {

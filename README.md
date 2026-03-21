@@ -42,7 +42,21 @@ docker build -t <your-dockerhub-username>/cliproxyapi-monitor:latest .
 | `dashboard.environment.PASSWORD` | 看板访问密码；默认留空（将回退使用 config.yaml 的 secret） | `""` |
 | `dashboard.environment.AUTH_COOKIE_SECURE` | 登录 cookie 的 `Secure` 标记（HTTPS 建议改为 `true`） | `false` |
 
-### 4) 常用运维命令
+### 4) 可选环境变量（数据库 / 同步调优）
+
+| 环境变量 | 说明 | 默认值 |
+|---|---|---|
+| `POSTGRES_URL` | `DATABASE_URL` 的可选回退变量名 | 空 |
+| `DATABASE_CA` | PostgreSQL CA 证书，支持原始 PEM 或 Base64 PEM | 空 |
+| `DATABASE_POOL_MAX` | 连接池最大连接数 | `5` |
+| `DATABASE_POOL_IDLE_TIMEOUT_MS` | 空闲连接超时（毫秒） | `10000` |
+| `DATABASE_POOL_CONNECTION_TIMEOUT_MS` | 获取连接超时（毫秒） | `5000` |
+| `DATABASE_POOL_MAX_USES` | 单连接最大复用次数 | `7500` |
+| `NEXT_PUBLIC_SYNC_TIMEOUT_MS` | `/api/sync` 前后端共享超时（毫秒） | `60000` |
+| `AUTH_FILES_INSERT_CHUNK_SIZE` | `auth_file_mappings` 批量写入块大小 | `500` |
+| `USAGE_INSERT_CHUNK_SIZE` | `usage_records` 批量写入块大小 | `153` |
+
+### 5) 常用运维命令
 
 ```bash
 # 触发一次数据库备份（默认保留 7 天）

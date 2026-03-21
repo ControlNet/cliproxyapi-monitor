@@ -12,15 +12,20 @@ export const runtime = "nodejs";
 const PASSWORD = config.password;
 const COOKIE_NAME = "dashboard_auth";
 const AUTH_FILES_TIMEOUT_MS = 15_000;
-const USAGE_TIMEOUT_MS = 60_000;
 const INCREMENTAL_LOOKBACK_MINUTES = 20;
-const USAGE_INSERT_COLUMNS_PER_ROW = 13;
-const USAGE_INSERT_PARAMETER_SOFT_LIMIT = 2_000;
-const USAGE_INSERT_BATCH_SIZE = Math.max(
-  1,
-  Math.floor(USAGE_INSERT_PARAMETER_SOFT_LIMIT / USAGE_INSERT_COLUMNS_PER_ROW)
-);
 const FULL_SYNC_QUERY_VALUES = new Set(["1", "true", "yes", "on"]);
+
+function toPositiveInt(raw: string | undefined, fallback: number) {
+  if (!raw) return fallback;
+  const value = Number.parseInt(raw, 10);
+  if (Number.isNaN(value) || value <= 0) return fallback;
+  return value;
+}
+
+const DEFAULT_USAGE_INSERT_BATCH_SIZE = Math.max(1, Math.floor(2_000 / 13));
+const USAGE_TIMEOUT_MS = toPositiveInt(process.env.NEXT_PUBLIC_SYNC_TIMEOUT_MS, 60_000);
+const AUTH_FILES_INSERT_CHUNK_SIZE = toPositiveInt(process.env.AUTH_FILES_INSERT_CHUNK_SIZE, 500);
+const USAGE_INSERT_BATCH_SIZE = toPositiveInt(process.env.USAGE_INSERT_CHUNK_SIZE, DEFAULT_USAGE_INSERT_BATCH_SIZE);
 
 type UsageRow = typeof usageRecords.$inferInsert;
 
@@ -47,6 +52,15 @@ function isFullSyncRequest(request: Request) {
 
 function usageKey(route: string, model: string, source: string) {
   return `${route}\u0001${model}\u0001${source}`;
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  if (items.length === 0) return [];
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
@@ -110,21 +124,23 @@ async function syncAuthFileMappings(pulledAt: Date) {
   const rows = toAuthFileMappings(json, pulledAt);
   if (rows.length === 0) return 0;
 
-  await db
-    .insert(authFileMappings)
-    .values(rows)
-    .onConflictDoUpdate({
-      target: authFileMappings.authId,
-      set: {
-        name: sql`coalesce(nullif(excluded.name, ''), ${authFileMappings.name})`,
-        label: sql`coalesce(nullif(excluded.label, ''), ${authFileMappings.label})`,
-        provider: sql`coalesce(nullif(excluded.provider, ''), ${authFileMappings.provider})`,
-        source: sql`coalesce(nullif(excluded.source, ''), ${authFileMappings.source})`,
-        email: sql`coalesce(nullif(excluded.email, ''), ${authFileMappings.email})`,
-        updatedAt: sql`coalesce(excluded.updated_at, ${authFileMappings.updatedAt})`,
-        syncedAt: pulledAt
-      }
-    });
+  for (const chunk of chunkArray(rows, AUTH_FILES_INSERT_CHUNK_SIZE)) {
+    await db
+      .insert(authFileMappings)
+      .values(chunk)
+      .onConflictDoUpdate({
+        target: authFileMappings.authId,
+        set: {
+          name: sql`coalesce(nullif(excluded.name, ''), ${authFileMappings.name})`,
+          label: sql`coalesce(nullif(excluded.label, ''), ${authFileMappings.label})`,
+          provider: sql`coalesce(nullif(excluded.provider, ''), ${authFileMappings.provider})`,
+          source: sql`coalesce(nullif(excluded.source, ''), ${authFileMappings.source})`,
+          email: sql`coalesce(nullif(excluded.email, ''), ${authFileMappings.email})`,
+          updatedAt: sql`coalesce(excluded.updated_at, ${authFileMappings.updatedAt})`,
+          syncedAt: pulledAt
+        }
+      });
+  }
 
   return rows.length;
 }
