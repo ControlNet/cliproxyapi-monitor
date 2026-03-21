@@ -352,6 +352,7 @@ export async function getOverview(
   const overview: UsageOverview = {
     totalRequests,
     totalTokens: toNumber(totalsRow.totalTokens),
+    totalRawInputTokens: toNumber(totalsRow.inputTokens),
     totalInputTokens: toNumber(totalsRow.regularInputTokens),
     totalOutputTokens: toNumber(totalsRow.outputTokens),
     totalReasoningTokens: toNumber(totalsRow.reasoningTokens),

@@ -32,6 +32,7 @@ export type UsageSeriesPoint = {
 export type UsageOverview = {
   totalRequests: number;
   totalTokens: number;
+  totalRawInputTokens: number;
   /** Regular input tokens over the overview (input minus cached, clamped). */
   totalInputTokens: number;
   totalOutputTokens: number;

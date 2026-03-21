@@ -106,7 +106,9 @@ function buildHourlySeries(series: UsageSeriesPoint[], rangeHours?: number, time
   const end = withTs[withTs.length - 1].ts as number;
   const start = end - (rangeHours - 1) * HOUR_MS;
   const bucket = new Map<number, UsageSeriesPoint & { ts: number }>();
-  withTs.forEach((point) => bucket.set(point.ts as number, point as UsageSeriesPoint & { ts: number }));
+  withTs.forEach((point) => {
+    bucket.set(point.ts as number, point as UsageSeriesPoint & { ts: number });
+  });
 
   const filled: UsageSeriesPoint[] = [];
   for (let ts = start; ts <= end; ts += HOUR_MS) {
@@ -155,9 +157,10 @@ type ModelUsagePieChartProps = {
   pieMode: PieMode;
   darkMode: boolean;
   fullscreen?: boolean;
+  pieColorIndexMap: Map<string, number>;
 };
 
-function ModelUsagePieChart({ models, pieMode, darkMode, fullscreen = false }: ModelUsagePieChartProps) {
+function ModelUsagePieChart({ models, pieMode, darkMode, fullscreen = false, pieColorIndexMap }: ModelUsagePieChartProps) {
   const [hoveredPieIndex, setHoveredPieIndex] = useState<number | null>(null);
   const [pieTooltipOpen, setPieTooltipOpen] = useState(false);
   const pieChartContainerRef = useRef<HTMLDivElement | null>(null);
@@ -174,6 +177,11 @@ function ModelUsagePieChart({ models, pieMode, darkMode, fullscreen = false }: M
     if (mode === "tokens") return formatCompactNumber(value);
     return formatNumberWithCommas(value);
   }, []);
+
+  const getPieColor = useCallback((model: string) => {
+    const colorIndex = pieColorIndexMap.get(model) ?? 0;
+    return PIE_COLORS[colorIndex % PIE_COLORS.length];
+  }, [pieColorIndexMap]);
 
   const cancelPieLegendClear = useCallback(() => {
     if (pieLegendClearTimerRef.current !== null) {
@@ -265,7 +273,7 @@ function ModelUsagePieChart({ models, pieMode, darkMode, fullscreen = false }: M
               {models.map((_, index) => (
                 <Cell
                   key={`${fullscreen ? "fs" : "card"}-cell-${index}`}
-                  fill={PIE_COLORS[index % PIE_COLORS.length]}
+                  fill={getPieColor(models[index]?.model ?? "")}
                   fillOpacity={hoveredPieIndex === null || hoveredPieIndex === index ? 1 : 0.3}
                   style={{ transition: "fill-opacity 0.12s linear" }}
                 />
@@ -313,7 +321,8 @@ function ModelUsagePieChart({ models, pieMode, darkMode, fullscreen = false }: M
         {legendItems.map(({ item, originalIndex, percent, value }) => {
           const isHighlighted = hoveredPieIndex === null || hoveredPieIndex === originalIndex;
           return (
-            <div
+            <button
+              type="button"
               key={item.model}
               className={`rounded-lg ${fullscreen ? "p-3" : "p-2"} transition cursor-pointer ${
                 isHighlighted ? (darkMode ? "bg-slate-700/30" : "bg-slate-100") : "opacity-40"
@@ -332,8 +341,8 @@ function ModelUsagePieChart({ models, pieMode, darkMode, fullscreen = false }: M
                     isHighlighted && hoveredPieIndex === originalIndex ? "ring-2 ring-offset-1" : ""
                   }`}
                   style={{
-                    backgroundColor: PIE_COLORS[originalIndex % PIE_COLORS.length],
-                    "--tw-ring-color": isHighlighted && hoveredPieIndex === originalIndex ? PIE_COLORS[originalIndex % PIE_COLORS.length] : "transparent",
+                    backgroundColor: getPieColor(item.model),
+                    "--tw-ring-color": isHighlighted && hoveredPieIndex === originalIndex ? getPieColor(item.model) : "transparent",
                     transform: isHighlighted && hoveredPieIndex === originalIndex ? "scale(1.2)" : "scale(1)"
                   } as React.CSSProperties}
                 />
@@ -346,7 +355,7 @@ function ModelUsagePieChart({ models, pieMode, darkMode, fullscreen = false }: M
                 <span className="mx-1.5">·</span>
                 <span>{formatPieMetricValue(value, pieMode)}{pieMode === "tokens" ? " tokens" : pieMode === "requests" ? " 次" : ""}</span>
               </div>
-            </div>
+            </button>
           );
         })}
       </div>
@@ -454,6 +463,24 @@ export default function DashboardPage() {
     details?: { model: string; status: string; reason?: string; matchedWith?: string }[];
     error?: string;
   } | null>(null);
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [refreshPreset, setRefreshPreset] = useState("60");
+  const [customIntervalInput, setCustomIntervalInput] = useState("60");
+  const [customIntervalUnit, setCustomIntervalUnit] = useState<"s" | "m">("s");
+  const autoRefreshWorkerRef = useRef<Worker | null>(null);
+
+  const autoRefreshIntervalMs = useMemo(() => {
+    if (refreshPreset !== "custom") {
+      const parsed = Number.parseInt(refreshPreset, 10);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed * 1000 : 60_000;
+    }
+    const numeric = Number.parseInt(customIntervalInput, 10);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      return customIntervalUnit === "m" ? 60_000 : 60_000;
+    }
+    const safeValue = Math.max(customIntervalUnit === "m" ? 1 : 5, numeric);
+    return customIntervalUnit === "m" ? safeValue * 60_000 : safeValue * 1000;
+  }, [refreshPreset, customIntervalInput, customIntervalUnit]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -462,6 +489,29 @@ export default function DashboardPage() {
       JSON.stringify({ mode: rangeMode, days: rangeDays, start: customStart, end: customEnd })
     );
   }, [rangeMode, rangeDays, customStart, customEnd]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = window.localStorage.getItem("autoRefreshSettings");
+    if (!saved) return;
+    try {
+      const parsed = JSON.parse(saved) as { preset?: string; custom?: string; unit?: "s" | "m" };
+      if (parsed.preset) setRefreshPreset(parsed.preset);
+      if (parsed.custom) setCustomIntervalInput(parsed.custom);
+      if (parsed.unit === "m") setCustomIntervalUnit("m");
+    } catch (error) {
+      console.warn("Failed to parse saved autoRefreshSettings", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("autoRefreshSettings", JSON.stringify({
+      preset: refreshPreset,
+      custom: customIntervalInput,
+      unit: customIntervalUnit,
+    }));
+  }, [refreshPreset, customIntervalInput, customIntervalUnit]);
 
   const [trendVisible, setTrendVisible] = useState<Record<string, boolean>>({
     requests: true,
@@ -857,6 +907,35 @@ export default function DashboardPage() {
   }, [applyTheme]);
 
   useEffect(() => {
+    if (typeof window === "undefined" || typeof Worker === "undefined") return;
+    const worker = new Worker("/auto-refresh-worker.js");
+    autoRefreshWorkerRef.current = worker;
+    worker.onmessage = (event: MessageEvent<{ type?: string }>) => {
+      if (event.data?.type === "tick") {
+        void doSync(false, true);
+      }
+    };
+    return () => {
+      worker.postMessage({ type: "stop" });
+      worker.terminate();
+      autoRefreshWorkerRef.current = null;
+    };
+  }, [doSync]);
+
+  useEffect(() => {
+    const worker = autoRefreshWorkerRef.current;
+    if (!worker) return;
+    if (!autoRefresh || !ready) {
+      worker.postMessage({ type: "stop" });
+      return;
+    }
+    worker.postMessage({ type: "start", interval: autoRefreshIntervalMs });
+    return () => {
+      worker.postMessage({ type: "stop" });
+    };
+  }, [autoRefresh, autoRefreshIntervalMs, ready]);
+
+  useEffect(() => {
     if (!ready) return;
 
     let active = true;
@@ -921,6 +1000,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!ready) return;
     if (rangeMode === "custom" && (!customStart || !customEnd)) return;
+    void refreshTrigger;
 
     const controller = new AbortController();
     let active = true;
@@ -992,6 +1072,11 @@ export default function DashboardPage() {
 
   const overviewData = overview;
   const showEmpty = overviewEmpty || !overview;
+  const totalRawInputTokens = overviewData?.totalRawInputTokens ?? 0;
+  const totalRegularInputTokens = overviewData?.totalInputTokens ?? 0;
+  const cacheHitRate = totalRawInputTokens > 0
+    ? (overviewData?.totalCachedTokens ?? 0) / totalRawInputTokens
+    : 0;
   
   const hourlySeries = useMemo(() => {
     if (!overviewData?.byHour) return [] as UsageSeriesPoint[];
@@ -1026,8 +1111,12 @@ export default function DashboardPage() {
   const priceModelOptions = useMemo(() => {
     const configuredModels = new Set(prices.map(p => p.model));
     const allModels = new Set<string>();
-    modelOptions.forEach((m) => allModels.add(m));
-    overviewData?.models?.forEach((m) => allModels.add(m.model));
+    modelOptions.forEach((m) => {
+      allModels.add(m);
+    });
+    overviewData?.models?.forEach((m) => {
+      allModels.add(m.model);
+    });
     return Array.from(allModels).filter(m => !configuredModels.has(m));
   }, [modelOptions, prices, overviewData?.models]);
 
@@ -1060,6 +1149,13 @@ export default function DashboardPage() {
   const sortedModelsByCost = useMemo(() => {
     const models = overviewData?.models ?? [];
     return [...models].sort((a, b) => b.cost - a.cost);
+  }, [overviewData]);
+
+  const pieColorIndexMap = useMemo(() => {
+    const models = overviewData?.models ?? [];
+    return new Map(
+      [...models].sort((a, b) => b.tokens - a.tokens).map((item, index) => [item.model, index])
+    );
   }, [overviewData]);
 
   // 计算实际数据时长（从最早记录到现在）
@@ -1292,6 +1388,7 @@ export default function DashboardPage() {
         </div>
         <div className="flex items-center gap-4">
           <button
+            type="button"
             onClick={() => applyTheme(!darkMode)}
             className={`rounded-lg border p-2 transition ${
               darkMode
@@ -1304,6 +1401,7 @@ export default function DashboardPage() {
           </button>
           <div className="relative">
             <button
+              type="button"
               onClick={() => doSync(true, true, 60000, pendingUsageRequests > 0)}
               disabled={syncing}
               className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
@@ -1321,6 +1419,65 @@ export default function DashboardPage() {
               <span className="pointer-events-none absolute -right-2 -top-2 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
                 {pendingUsageRequests > 99 ? "99+" : pendingUsageRequests}
               </span>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setAutoRefresh((value) => !value)}
+              className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
+                autoRefresh
+                  ? "border-emerald-500/50 bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30"
+                  : darkMode
+                    ? "border-slate-700 bg-slate-800 text-slate-300 hover:border-slate-500"
+                    : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
+              }`}
+            >
+              {autoRefresh ? "自动刷新：开" : "自动刷新：关"}
+            </button>
+            <select
+              value={refreshPreset}
+              onChange={(event) => setRefreshPreset(event.target.value)}
+              className={`rounded-lg border px-2.5 py-1.5 text-sm transition ${
+                darkMode
+                  ? "border-slate-700 bg-slate-800 text-slate-200"
+                  : "border-slate-300 bg-white text-slate-700"
+              }`}
+            >
+              <option value="60">60 秒</option>
+              <option value="300">5 分钟</option>
+              <option value="900">15 分钟</option>
+              <option value="1800">30 分钟</option>
+              <option value="3600">60 分钟</option>
+              <option value="custom">自定义</option>
+            </select>
+            {refreshPreset === "custom" ? (
+              <>
+                <input
+                  type="number"
+                  min={customIntervalUnit === "m" ? 1 : 5}
+                  step={1}
+                  value={customIntervalInput}
+                  onChange={(event) => setCustomIntervalInput(event.target.value)}
+                  className={`w-20 rounded-lg border px-2.5 py-1.5 text-sm transition ${
+                    darkMode
+                      ? "border-slate-700 bg-slate-800 text-slate-200"
+                      : "border-slate-300 bg-white text-slate-700"
+                  }`}
+                />
+                <select
+                  value={customIntervalUnit}
+                  onChange={(event) => setCustomIntervalUnit(event.target.value === "m" ? "m" : "s")}
+                  className={`rounded-lg border px-2.5 py-1.5 text-sm transition ${
+                    darkMode
+                      ? "border-slate-700 bg-slate-800 text-slate-200"
+                      : "border-slate-300 bg-white text-slate-700"
+                  }`}
+                >
+                  <option value="s">秒</option>
+                  <option value="m">分钟</option>
+                </select>
+              </>
             ) : null}
           </div>
           <div className="flex flex-col items-end gap-0.5">
@@ -1341,6 +1498,7 @@ export default function DashboardPage() {
         <span className="text-sm uppercase tracking-wide text-slate-500">时间范围</span>
         {[7, 14, 30].map((days) => (
           <button
+            type="button"
             key={days}
             onClick={() => {
               setRangeMode("preset");
@@ -1359,6 +1517,7 @@ export default function DashboardPage() {
         ))}
         <div className="relative" ref={customPickerRef}>
           <button
+            type="button"
             onClick={() => {
               setCustomPickerOpen((open) => !open);
               setCustomDraftStart(customStart);
@@ -1502,6 +1661,7 @@ export default function DashboardPage() {
             }}
           />
           <button
+            type="button"
             onClick={applyFilters}
             className={`rounded-lg border px-3 py-1.5 text-sm font-semibold transition ${darkMode ? "border-slate-700 bg-slate-800 text-slate-300 hover:border-slate-500" : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"}`}
           >
@@ -1509,6 +1669,7 @@ export default function DashboardPage() {
           </button>
           {(filterModel || filterRoute || filterName) ? (
             <button
+              type="button"
               onClick={() => {
                 setFilterModelInput("");
                 setFilterRouteInput("");
@@ -1577,9 +1738,17 @@ export default function DashboardPage() {
                 </div>
               </div>
               <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className={darkMode ? "text-slate-400" : "text-slate-500"}>输入</span>
-                  <span className="font-medium" style={{ color: darkMode ? "#fb7185" : "#e11d48" }}>{formatNumberWithCommas(overviewData.totalInputTokens)}</span>
+                <div className="flex items-center justify-between group cursor-default">
+                  <span className={`relative ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                    <span className="select-none transition-opacity duration-200 group-hover:opacity-0">未命中输入</span>
+                    <span className="absolute left-0 top-0 whitespace-nowrap opacity-0 transition-opacity duration-200 group-hover:opacity-100">原始输入</span>
+                  </span>
+                  <span className="relative font-medium" style={{ color: darkMode ? "#fb7185" : "#e11d48" }}>
+                    <span className="select-none transition-opacity duration-200 group-hover:opacity-0">{formatNumberWithCommas(totalRegularInputTokens)}</span>
+                    <span className="absolute right-0 top-0 whitespace-nowrap opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                      {formatNumberWithCommas(totalRawInputTokens)}
+                    </span>
+                  </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className={darkMode ? "text-slate-400" : "text-slate-500"}>输出</span>
@@ -1589,9 +1758,21 @@ export default function DashboardPage() {
                   <span className={darkMode ? "text-slate-400" : "text-slate-500"}>思考</span>
                   <span className="font-medium" style={{ color: darkMode ? "#fbbf24" : "#d97706" }}>{formatNumberWithCommas(overviewData.totalReasoningTokens)}</span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className={darkMode ? "text-slate-400" : "text-slate-500"}>缓存</span>
-                  <span className="font-medium" style={{ color: darkMode ? "#c084fc" : "#9333ea" }}>{formatNumberWithCommas(overviewData.totalCachedTokens)}</span>
+                <div className="flex items-center justify-between group cursor-default">
+                  <span className={`relative ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                    <span className="select-none transition-opacity duration-200 group-hover:opacity-0">缓存命中率</span>
+                    <span className="absolute left-0 top-0 whitespace-nowrap opacity-0 transition-opacity duration-200 group-hover:opacity-100">缓存</span>
+                  </span>
+                  <span className="relative font-medium" style={{ color: darkMode ? "#c084fc" : "#9333ea" }}>
+                    <span className="select-none transition-opacity duration-200 group-hover:opacity-0">
+                      {totalRawInputTokens > 0
+                        ? `${(cacheHitRate * 100).toFixed(2)}%`
+                        : "0.00%"}
+                    </span>
+                    <span className="absolute right-0 top-0 whitespace-nowrap opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                      {formatNumberWithCommas(overviewData.totalCachedTokens)}
+                    </span>
+                  </span>
                 </div>
               </div>
             </div>
@@ -1716,7 +1897,7 @@ export default function DashboardPage() {
                               const value = entry.name === "费用" ? formatCurrency(entry.value) : formatNumberWithCommas(entry.value);
                               
                               return (
-                                <div key={index} className="flex items-center gap-2 text-sm">
+                                <div key={`${entry.name}-${String(entry.value)}`} className="flex items-center gap-2 text-sm">
                                   <div className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
                                   <span style={{ color: color }} className="font-medium">
                                     {entry.name}:
@@ -1815,6 +1996,7 @@ export default function DashboardPage() {
                   models={overviewData.models}
                   pieMode={pieMode}
                   darkMode={darkMode}
+                  pieColorIndexMap={pieColorIndexMap}
                 />
               </>
             )}
@@ -1838,6 +2020,7 @@ export default function DashboardPage() {
                 <div className="flex items-center gap-1">
                   {hourRangeOptions.map((opt) => (
                     <button
+                      type="button"
                       key={opt.key}
                       onClick={() => setHourRange(opt.key)}
                       className={`rounded-md border px-2 py-1 text-xs transition ${
@@ -1924,7 +2107,7 @@ export default function DashboardPage() {
                               if (entry.name === "请求数") color = darkMode ? "#60a5fa" : "#3b82f6";
                               
                               return (
-                                <div key={index} className="flex items-center gap-2 text-sm">
+                                <div key={`${entry.name}-${String(entry.value)}`} className="flex items-center gap-2 text-sm">
                                   <div className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
                                   <span style={{ color: color }} className="font-medium">
                                     {entry.name}:
@@ -2076,6 +2259,7 @@ export default function DashboardPage() {
                 )}
               </div>
               <button
+                type="button"
                 onClick={syncModelPrices}
                 disabled={syncingPrices}
                 className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition ${
@@ -2096,8 +2280,8 @@ export default function DashboardPage() {
           <div className="mt-6 grid gap-6 lg:grid-cols-5">
           <form onSubmit={handleSubmit} className={`rounded-xl border p-5 lg:col-span-2 ${darkMode ? "border-slate-700 bg-slate-800/50" : "border-slate-200 bg-slate-50"}`}>
             <div className="grid gap-6">
-              <label className={`text-sm font-medium ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
-                模型名称
+              <div className={`text-sm font-medium ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
+                <div>模型名称</div>
                 <ComboBox
                   value={form.model}
                   onChange={(val) => setForm((f) => ({ ...f, model: val }))}
@@ -2106,7 +2290,7 @@ export default function DashboardPage() {
                   darkMode={darkMode}
                   className="mt-1 w-full"
                 />
-              </label>
+              </div>
               <label className={`text-sm font-medium ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
                 输入（$ / M tokens）
                 <input
@@ -2369,7 +2553,7 @@ export default function DashboardPage() {
                             const value = entry.name === "费用" ? formatCurrency(entry.value) : formatNumberWithCommas(entry.value);
                             
                             return (
-                              <div key={index} className="flex items-center gap-2 text-sm">
+                              <div key={`${entry.name}-${String(entry.value)}`} className="flex items-center gap-2 text-sm">
                                 <div className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
                                 <span style={{ color: color }} className="font-medium">
                                   {entry.name}:
@@ -2456,6 +2640,7 @@ export default function DashboardPage() {
                   pieMode={pieMode}
                   darkMode={darkMode}
                   fullscreen
+                  pieColorIndexMap={pieColorIndexMap}
                 />
               </div>
             </div>
@@ -2468,6 +2653,7 @@ export default function DashboardPage() {
                   <div className="flex items-center gap-1">
                     {hourRangeOptions.map((opt) => (
                       <button
+                        type="button"
                         key={opt.key}
                         onClick={() => setHourRange(opt.key)}
                         className={`rounded-md border px-2 py-1 text-xs transition ${
@@ -2557,7 +2743,7 @@ export default function DashboardPage() {
                               if (entry.name === "请求数") color = darkMode ? "#60a5fa" : "#3b82f6";
                               
                               return (
-                                <div key={index} className="flex items-center gap-2 text-sm">
+                                <div key={`${entry.name}-${String(entry.value)}`} className="flex items-center gap-2 text-sm">
                                   <div className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
                                   <span style={{ color: color }} className="font-medium">
                                     {entry.name}:
@@ -2649,7 +2835,8 @@ export default function DashboardPage() {
 
       {/* Toast 通知 - 右上角显示 */}
       {syncStatus && (
-        <div
+        <button
+          type="button"
           onClick={() => closeSyncStatus()}
           className={`fixed right-6 top-24 z-50 max-w-[290px] cursor-pointer rounded-lg border px-4 py-3 shadow-lg transition-opacity hover:opacity-90 ${
             syncStatusClosing ? "animate-toast-out" : "animate-toast-in"
@@ -2669,11 +2856,12 @@ export default function DashboardPage() {
             </span>
             <span className="text-sm font-medium">{syncStatus}</span>
           </div>
-        </div>
+        </button>
       )}
 
       {saveStatus && (
-        <div
+        <button
+          type="button"
           onClick={() => closeSaveStatus()}
           className={`fixed right-6 top-36 z-50 max-w-[290px] cursor-pointer rounded-lg border px-4 py-3 shadow-lg transition-opacity hover:opacity-90 ${
             saveStatusClosing ? "animate-toast-out" : "animate-toast-in"
@@ -2687,7 +2875,7 @@ export default function DashboardPage() {
             <span className="text-xl animate-emoji-pop">✅</span>
             <span className="text-sm font-medium">{saveStatus}</span>
           </div>
-        </div>
+        </button>
       )}
 
       {/* TODO: 价格同步 toast 通知已禁用，详情请查看弹窗
@@ -2792,7 +2980,7 @@ export default function DashboardPage() {
                     </thead>
                     <tbody>
                       {pricesSyncData.details.map((d, i) => (
-                        <tr key={i} className={`border-b ${darkMode ? "border-slate-700/50" : "border-slate-200"}`}>
+                        <tr key={`${d.model}-${d.status}-${i}`} className={`border-b ${darkMode ? "border-slate-700/50" : "border-slate-200"}`}>
                           <td className="py-1.5 px-2 font-mono">{d.model}</td>
                           <td className="py-1.5 px-2">
                             <span className={`inline-flex items-center justify-center w-6 h-4.5 rounded text-xs ${
@@ -2872,14 +3060,14 @@ function ComboBox({
     darkMode ? "border-slate-700 bg-slate-800 text-white placeholder-slate-500" : "border-slate-300 bg-white text-slate-900 placeholder-slate-400"
   }`;
 
-  const closeDropdown = () => {
+  const closeDropdown = useCallback(() => {
     setIsClosing(true);
     setTimeout(() => {
       setOpen(false);
       setIsVisible(false);
       setIsClosing(false);
     }, 100); // Match animation duration
-  };
+  }, []);
 
   useEffect(() => {
     if (open) {
@@ -2904,7 +3092,7 @@ function ComboBox({
 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [open]);
+  }, [open, closeDropdown]);
 
   return (
     <div className="relative" ref={containerRef}>
