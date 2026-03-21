@@ -129,39 +129,24 @@ export async function getExplorePoints(
     return { days, total: 0, zeroTokensCount: 0, returned: 0, step: 1, points: [] as ExplorePoint[], filters };
   }
 
-  const pointsWhere = shouldFilterInvalid ? and(...whereParts, sql`${usageRecords.totalTokens} != 0`) : where;
-  const effectiveTotal = shouldFilterInvalid ? Math.max(0, total - zeroTokensCount) : total;
-  const step = effectiveTotal > maxPoints ? Math.ceil(effectiveTotal / maxPoints) : 1;
+  const step = 1;
 
-  // Use row_number() sampling for stable, time-ordered down-sampling.
-  const points = await db
+  const pointsWhere = shouldFilterInvalid ? and(...whereParts, sql`${usageRecords.totalTokens} != 0`) : where;
+  const basePointsQuery = db
     .select({
-      ts: sql<number>`(extract(epoch from sampled.occurred_at) * 1000)::bigint`,
-      tokens: sql<number>`sampled.total_tokens`,
-      inputTokens: sql<number>`sampled.input_tokens`,
-      outputTokens: sql<number>`sampled.output_tokens`,
-      reasoningTokens: sql<number>`sampled.reasoning_tokens`,
-      cachedTokens: sql<number>`sampled.cached_tokens`,
-      model: sql<string>`sampled.model`
+      ts: sql<number>`(extract(epoch from ${usageRecords.occurredAt}) * 1000)::bigint`,
+      tokens: sql<number>`${usageRecords.totalTokens}`,
+      inputTokens: sql<number>`${usageRecords.inputTokens}`,
+      outputTokens: sql<number>`${usageRecords.outputTokens}`,
+      reasoningTokens: sql<number>`${usageRecords.reasoningTokens}`,
+      cachedTokens: sql<number>`${usageRecords.cachedTokens}`,
+      model: sql<string>`${usageRecords.model}`
     })
-    .from(
-      sql`(
-        select
-          ${usageRecords.occurredAt} as occurred_at,
-          ${usageRecords.totalTokens} as total_tokens,
-          ${usageRecords.inputTokens} as input_tokens,
-          ${usageRecords.outputTokens} as output_tokens,
-          ${usageRecords.reasoningTokens} as reasoning_tokens,
-          ${usageRecords.cachedTokens} as cached_tokens,
-          ${usageRecords.model} as model,
-          row_number() over (order by ${usageRecords.occurredAt}) as rn
-        from ${usageRecords}
-        where ${pointsWhere}
-      ) as sampled`
-    )
-    .where(sql`(sampled.rn - 1) % ${step} = 0`)
-    .orderBy(sql`sampled.occurred_at`)
-    .limit(maxPoints);
+    .from(usageRecords)
+    .where(pointsWhere)
+    .orderBy(usageRecords.occurredAt);
+
+  const points = await basePointsQuery.limit(maxPoints);
 
   return {
     days,
@@ -173,10 +158,10 @@ export async function getExplorePoints(
     points: points.map((p) => ({
       ts: Number(p.ts),
       tokens: Number(p.tokens ?? 0),
-      inputTokens: Number((p as any).inputTokens ?? 0),
-      outputTokens: Number((p as any).outputTokens ?? 0),
-      reasoningTokens: Number((p as any).reasoningTokens ?? 0),
-      cachedTokens: Number((p as any).cachedTokens ?? 0),
+      inputTokens: Number(p.inputTokens ?? 0),
+      outputTokens: Number(p.outputTokens ?? 0),
+      reasoningTokens: Number(p.reasoningTokens ?? 0),
+      cachedTokens: Number(p.cachedTokens ?? 0),
       model: String(p.model ?? "")
     }))
   };
