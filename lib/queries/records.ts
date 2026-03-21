@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte, or, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { authFileMappings, modelPrices, usageRecords } from "@/lib/db/schema";
@@ -21,11 +21,11 @@ export type UsageRecordRow = {
 };
 
 export type UsageRecordCursor = {
-  lastValue: string | number;
+  lastValues: Array<string | number>;
   lastId: number;
 };
 
-type SortField =
+export type SortField =
   | "occurredAt"
   | "model"
   | "route"
@@ -37,7 +37,8 @@ type SortField =
   | "cachedTokens"
   | "cost"
   | "isError";
-type SortOrder = "asc" | "desc";
+export type SortOrder = "asc" | "desc";
+export type SortKey = { field: SortField; order: SortOrder };
 
 // 注意：必须使用 sql.raw() 来引用外部表字段，否则 Drizzle 会丢失表名前缀
 // 反斜杠需要双重转义：JS 字符串转义 + PostgreSQL E'' 字符串转义
@@ -82,12 +83,45 @@ const COST_EXPR = sql<number>`coalesce(
 
 const CREDENTIAL_NAME_EXPR = sql<string>`coalesce(nullif(${authFileMappings.name}, ''), nullif(${usageRecords.source}, ''), '-')`;
 
+function getSortExpr(sortField: SortField): SQL {
+  switch (sortField) {
+    case "model":
+      return sql`${usageRecords.model}`;
+    case "route":
+      return sql`${usageRecords.route}`;
+    case "source":
+      return CREDENTIAL_NAME_EXPR;
+    case "totalTokens":
+      return sql`${usageRecords.totalTokens}`;
+    case "inputTokens":
+      return sql`${usageRecords.inputTokens}`;
+    case "outputTokens":
+      return sql`${usageRecords.outputTokens}`;
+    case "reasoningTokens":
+      return sql`${usageRecords.reasoningTokens}`;
+    case "cachedTokens":
+      return sql`${usageRecords.cachedTokens}`;
+    case "cost":
+      return COST_EXPR;
+    case "isError":
+      return sql`${usageRecords.isError}`;
+    case "occurredAt":
+    default:
+      return sql`${usageRecords.occurredAt}`;
+  }
+}
+
 function parseCursor(input: string | null): UsageRecordCursor | null {
   if (!input) return null;
   try {
     const raw = Buffer.from(input, "base64").toString("utf8");
     const parsed = JSON.parse(raw) as UsageRecordCursor;
-    if (parsed && typeof parsed.lastId === "number") {
+    if (
+      parsed &&
+      typeof parsed.lastId === "number" &&
+      Array.isArray(parsed.lastValues) &&
+      parsed.lastValues.every((value) => typeof value === "string" || typeof value === "number")
+    ) {
       return parsed;
     }
     return null;
@@ -96,31 +130,91 @@ function parseCursor(input: string | null): UsageRecordCursor | null {
   }
 }
 
+function getCursorValue(field: SortField, row: UsageRecordRow): string | number {
+  switch (field) {
+    case "model":
+      return row.model;
+    case "totalTokens":
+      return row.totalTokens;
+    case "cost":
+      return Number(row.cost ?? 0);
+    case "route":
+      return row.route;
+    case "source":
+      return row.credentialName;
+    case "inputTokens":
+      return row.inputTokens;
+    case "outputTokens":
+      return row.outputTokens;
+    case "reasoningTokens":
+      return row.reasoningTokens;
+    case "cachedTokens":
+      return row.cachedTokens;
+    case "isError":
+      return row.isError ? 1 : 0;
+    case "occurredAt":
+      return row.occurredAt.toISOString();
+  }
+}
+
+function toSqlCursorValue(field: SortField, value: string | number): string | number | Date | undefined {
+  if (field !== "occurredAt") return value;
+  const lastDate = new Date(String(value));
+  if (!Number.isFinite(lastDate.getTime())) return undefined;
+  return lastDate;
+}
+
 function buildCursorWhere(
-  sortField: SortField,
-  sortOrder: SortOrder,
+  sortKeys: SortKey[],
   cursor: UsageRecordCursor | null,
-  sortExpr: SQL
+  sortExprs: SQL[]
 ): SQL | undefined {
-  if (!cursor) return undefined;
+  if (!cursor || sortKeys.length === 0 || cursor.lastValues.length < sortKeys.length) return undefined;
 
-  const { lastValue, lastId } = cursor;
+  const clauses: SQL[] = [];
 
-  if (sortField === "occurredAt") {
-    const lastDate = new Date(String(lastValue));
-    if (!Number.isFinite(lastDate.getTime())) return undefined;
-    return sortOrder === "asc"
-      ? sql`(${usageRecords.occurredAt} > ${lastDate} OR (${usageRecords.occurredAt} = ${lastDate} AND ${usageRecords.id} > ${lastId}))`
-      : sql`(${usageRecords.occurredAt} < ${lastDate} OR (${usageRecords.occurredAt} = ${lastDate} AND ${usageRecords.id} < ${lastId}))`;
+  for (let i = 0; i < sortKeys.length; i += 1) {
+    const prefixEquals: SQL[] = [];
+    let invalidValue = false;
+
+    for (let j = 0; j < i; j += 1) {
+      const previousValue = toSqlCursorValue(sortKeys[j].field, cursor.lastValues[j]);
+      if (previousValue === undefined) {
+        invalidValue = true;
+        break;
+      }
+      prefixEquals.push(sql`${sortExprs[j]} = ${previousValue}`);
+    }
+    if (invalidValue) return undefined;
+
+    const currentValue = toSqlCursorValue(sortKeys[i].field, cursor.lastValues[i]);
+    if (currentValue === undefined) return undefined;
+    const comparison = sortKeys[i].order === "asc"
+      ? sql`${sortExprs[i]} > ${currentValue}`
+      : sql`${sortExprs[i]} < ${currentValue}`;
+
+    clauses.push(prefixEquals.length > 0 ? and(...prefixEquals, comparison)! : comparison);
   }
 
-  return sortOrder === "asc"
-    ? sql`(${sortExpr} > ${lastValue} OR (${sortExpr} = ${lastValue} AND ${usageRecords.id} > ${lastId}))`
-    : sql`(${sortExpr} < ${lastValue} OR (${sortExpr} = ${lastValue} AND ${usageRecords.id} < ${lastId}))`;
+  const allEquals: SQL[] = [];
+  for (let i = 0; i < sortKeys.length; i += 1) {
+    const value = toSqlCursorValue(sortKeys[i].field, cursor.lastValues[i]);
+    if (value === undefined) return undefined;
+    allEquals.push(sql`${sortExprs[i]} = ${value}`);
+  }
+
+  const idComparison = sortKeys[0].order === "asc"
+    ? sql`${usageRecords.id} > ${cursor.lastId}`
+    : sql`${usageRecords.id} < ${cursor.lastId}`;
+
+  clauses.push(and(...allEquals, idComparison)!);
+
+  return or(...clauses)!;
 }
 
 export async function getUsageRecords(input: {
   limit?: number;
+  sortKeys?: SortKey[];
   sortField?: SortField;
   sortOrder?: SortOrder;
   cursor?: string | null;
@@ -132,8 +226,17 @@ export async function getUsageRecords(input: {
   includeFilters?: boolean;
 }) {
   const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
-  const sortField: SortField = input.sortField ?? "occurredAt";
-  const sortOrder: SortOrder = input.sortOrder ?? "desc";
+  const rawSortKeys: SortKey[] =
+    input.sortKeys && input.sortKeys.length > 0
+      ? input.sortKeys
+      : [{ field: input.sortField ?? "occurredAt", order: input.sortOrder ?? "desc" }];
+  const seenFields = new Set<SortField>();
+  const sortKeys = rawSortKeys.filter((key) => {
+    if (seenFields.has(key.field)) return false;
+    seenFields.add(key.field);
+    return true;
+  });
+  const primaryKey = sortKeys[0] ?? { field: "occurredAt" as const, order: "desc" as const };
   const cursor = parseCursor(input.cursor ?? null);
 
   const whereParts: SQL[] = [];
@@ -164,35 +267,9 @@ export async function getUsageRecords(input: {
     whereParts.push(sql`${CREDENTIAL_NAME_EXPR} = ${input.source}`);
   }
 
-  const sortExpr = (() => {
-    switch (sortField) {
-      case "model":
-        return usageRecords.model;
-      case "route":
-        return usageRecords.route;
-      case "source":
-        return CREDENTIAL_NAME_EXPR;
-      case "totalTokens":
-        return usageRecords.totalTokens;
-      case "inputTokens":
-        return usageRecords.inputTokens;
-      case "outputTokens":
-        return usageRecords.outputTokens;
-      case "reasoningTokens":
-        return usageRecords.reasoningTokens;
-      case "cachedTokens":
-        return usageRecords.cachedTokens;
-      case "cost":
-        return COST_EXPR;
-      case "isError":
-        return usageRecords.isError;
-      case "occurredAt":
-      default:
-        return usageRecords.occurredAt;
-    }
-  })() as SQL;
+  const sortExprs = sortKeys.map((key) => getSortExpr(key.field));
 
-  const cursorWhere = buildCursorWhere(sortField, sortOrder, cursor, sortExpr);
+  const cursorWhere = buildCursorWhere(sortKeys, cursor, sortExprs);
   if (cursorWhere) whereParts.push(cursorWhere);
 
   const where = whereParts.length ? and(...whereParts) : undefined;
@@ -218,8 +295,8 @@ export async function getUsageRecords(input: {
     .leftJoin(authFileMappings, eq(usageRecords.authIndex, authFileMappings.authId))
     .where(where)
     .orderBy(
-      sortOrder === "asc" ? asc(sortExpr) : desc(sortExpr),
-      sortOrder === "asc" ? asc(usageRecords.id) : desc(usageRecords.id)
+      ...sortKeys.map((key, index) => (key.order === "asc" ? asc(sortExprs[index]) : desc(sortExprs[index]))),
+      primaryKey.order === "asc" ? asc(usageRecords.id) : desc(usageRecords.id)
     )
     .limit(limit + 1);
 
@@ -232,34 +309,10 @@ export async function getUsageRecords(input: {
     if (!hasMore) return null;
     const last = items[items.length - 1];
     if (!last) return null;
-    const lastValue = (() => {
-      switch (sortField) {
-        case "model":
-          return last.model;
-        case "totalTokens":
-          return last.totalTokens;
-        case "cost":
-          return Number(last.cost ?? 0);
-        case "route":
-          return last.route;
-        case "source":
-          return last.credentialName;
-        case "inputTokens":
-          return last.inputTokens;
-        case "outputTokens":
-          return last.outputTokens;
-        case "reasoningTokens":
-          return last.reasoningTokens;
-        case "cachedTokens":
-          return last.cachedTokens;
-        case "isError":
-          return last.isError ? 1 : 0;
-        case "occurredAt":
-        default:
-          return last.occurredAt.toISOString();
-      }
-    })();
-    const cursorPayload: UsageRecordCursor = { lastValue, lastId: last.id };
+    const cursorPayload: UsageRecordCursor = {
+      lastValues: sortKeys.map((key) => getCursorValue(key.field, last)),
+      lastId: last.id
+    };
     return Buffer.from(JSON.stringify(cursorPayload)).toString("base64");
   })();
 

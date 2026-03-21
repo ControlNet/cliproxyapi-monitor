@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { assertEnv } from "@/lib/config";
-import { getUsageRecords } from "@/lib/queries/records";
+import { getUsageRecords, type SortKey } from "@/lib/queries/records";
 
 export const runtime = "nodejs";
 
@@ -14,20 +14,27 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const limitParam = searchParams.get("limit");
-    const sortField = searchParams.get("sortField") as
-      | "occurredAt"
-      | "model"
-      | "route"
-      | "source"
-      | "totalTokens"
-      | "inputTokens"
-      | "outputTokens"
-      | "reasoningTokens"
-      | "cachedTokens"
-      | "cost"
-      | "isError"
-      | null;
-    const sortOrder = searchParams.get("sortOrder") as "asc" | "desc" | null;
+    const VALID_SORT_FIELDS = new Set(["occurredAt", "model", "route", "source", "totalTokens", "inputTokens", "outputTokens", "reasoningTokens", "cachedTokens", "cost", "isError"]);
+    const sortParam = searchParams.get("sort");
+    let sortKeys: SortKey[] | undefined;
+    if (sortParam) {
+      const parsed = sortParam
+        .split(",")
+        .map((part) => {
+          const [field, order] = part.split(":");
+          return { field: (field ?? "").trim(), order: (order ?? "desc").trim() };
+        })
+        .filter((key) => VALID_SORT_FIELDS.has(key.field) && (key.order === "asc" || key.order === "desc")) as SortKey[];
+      if (parsed.length > 0) sortKeys = parsed;
+    }
+    const legacySortField = searchParams.get("sortField");
+    const legacySortOrder = searchParams.get("sortOrder");
+    const sortField = !sortKeys && legacySortField && VALID_SORT_FIELDS.has(legacySortField)
+      ? legacySortField as SortKey["field"]
+      : undefined;
+    const sortOrder = !sortKeys && (legacySortOrder === "asc" || legacySortOrder === "desc")
+      ? legacySortOrder
+      : undefined;
     const cursor = searchParams.get("cursor");
     const model = searchParams.get("model");
     const route = searchParams.get("route");
@@ -40,8 +47,9 @@ export async function GET(request: Request) {
 
     const payload = await getUsageRecords({
       limit,
-      sortField: sortField ?? undefined,
-      sortOrder: sortOrder ?? undefined,
+      sortKeys,
+      sortField,
+      sortOrder,
       cursor,
       model: model || undefined,
       route: route || undefined,

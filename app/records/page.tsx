@@ -52,6 +52,7 @@ type SortField =
   | "cost"
   | "isError";
 type SortOrder = "asc" | "desc";
+type SortKey = { field: SortField; order: SortOrder };
 
 type ColumnKey =
   | "occurredAt"
@@ -250,15 +251,18 @@ function SkeletonRow() {
 
 function SortHeader({
   label,
-  active,
+  priority,
   order,
+  showPriority,
   onClick
 }: {
   label: string;
-  active: boolean;
-  order: SortOrder;
+  priority?: number;
+  order?: SortOrder;
+  showPriority: boolean;
   onClick: () => void;
 }) {
+  const active = priority !== undefined;
   return (
     <button
       type="button"
@@ -266,6 +270,11 @@ function SortHeader({
       className={`inline-flex items-center gap-1 font-semibold transition ${active ? "text-white" : "text-slate-300 hover:text-white"}`}
     >
       <span>{label}</span>
+      {showPriority && priority !== undefined ? (
+        <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-indigo-500/20 px-1 text-[10px] text-indigo-200 ring-1 ring-indigo-500/30">
+          {priority}
+        </span>
+      ) : null}
       {active ? (
         order === "asc" ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />
       ) : null}
@@ -308,8 +317,7 @@ export default function RecordsPage() {
   const [appliedStart, setAppliedStart] = useState<string>("");
   const [appliedEnd, setAppliedEnd] = useState<string>("");
 
-  const [sortField, setSortField] = useState<SortField>("occurredAt");
-  const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
+  const [sortKeys, setSortKeys] = useState<SortKey[]>([{ field: "occurredAt", order: "desc" }]);
   const [columnSettings, setColumnSettings] = useState<ColumnSetting[]>(
     DEFAULT_COLUMN_ORDER.map((key) => ({
       key,
@@ -367,7 +375,7 @@ export default function RecordsPage() {
     setDragIndicator(null);
   }, []);
 
-  const onColumnDragOver = useCallback((targetKey: ColumnKey, event: ReactDragEvent<HTMLDivElement>) => {
+  const onColumnDragOver = useCallback((targetKey: ColumnKey, event: ReactDragEvent<HTMLElement>) => {
     event.preventDefault();
     const rect = event.currentTarget.getBoundingClientRect();
     const position: "before" | "after" = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
@@ -377,7 +385,7 @@ export default function RecordsPage() {
     });
   }, []);
 
-  const onColumnDrop = useCallback((targetKey: ColumnKey, event: ReactDragEvent<HTMLDivElement>) => {
+  const onColumnDrop = useCallback((targetKey: ColumnKey, event: ReactDragEvent<HTMLElement>) => {
     event.preventDefault();
     const sourceKey = draggingColumnRef.current;
     const rect = event.currentTarget.getBoundingClientRect();
@@ -466,7 +474,7 @@ export default function RecordsPage() {
   }, [visibleColumns, getBaseColumnWidth, columnSettingMap, tableContainerWidth]);
 
   const beginResizeColumn = useCallback(
-    (key: ColumnKey, event: ReactMouseEvent<HTMLDivElement>) => {
+    (key: ColumnKey, event: ReactMouseEvent<HTMLElement>) => {
       event.preventDefault();
       event.stopPropagation();
       const current = columnSettingMap.get(key);
@@ -509,8 +517,7 @@ export default function RecordsPage() {
     (cursorValue?: string | null, includeFilters?: boolean) => {
       const params = new URLSearchParams();
       params.set("limit", String(PAGE_SIZE));
-      params.set("sortField", sortField);
-      params.set("sortOrder", sortOrder);
+      params.set("sort", sortKeys.map((key) => `${key.field}:${key.order}`).join(","));
       if (cursorValue) params.set("cursor", cursorValue);
       if (appliedModel) params.set("model", appliedModel);
       if (appliedRoute) params.set("route", appliedRoute);
@@ -520,7 +527,7 @@ export default function RecordsPage() {
       if (includeFilters) params.set("includeFilters", "1");
       return params;
     },
-    [sortField, sortOrder, appliedModel, appliedRoute, appliedSource, appliedStart, appliedEnd]
+    [sortKeys, appliedModel, appliedRoute, appliedSource, appliedStart, appliedEnd]
   );
 
   const fetchRecords = useCallback(
@@ -670,17 +677,25 @@ export default function RecordsPage() {
   }, [cursor, fetchRecords, hasMore, loading]);
 
   const handleSort = useCallback((field: SortField) => {
-    if (field === sortField) {
-      setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
-    } else {
-      setSortField(field);
-      setSortOrder("desc");
-    }
-  }, [sortField]);
+    setSortKeys((prev) => {
+      const index = prev.findIndex((key) => key.field === field);
+      if (index !== -1) {
+        const current = prev[index];
+        if (current.order === "asc") {
+          if (prev.length > 1 && field !== "occurredAt") {
+            return prev.filter((_, currentIndex) => currentIndex !== index);
+          }
+          return prev.map((key, currentIndex) => currentIndex === index ? { ...key, order: "desc" } : key);
+        }
+        return prev.map((key, currentIndex) => currentIndex === index ? { ...key, order: "asc" } : key);
+      }
+      return [{ field, order: "desc" }, ...prev];
+    });
+  }, []);
 
   useEffect(() => {
     resetAndFetch(false);
-  }, [sortField, sortOrder, resetAndFetch]);
+  }, [resetAndFetch]);
 
   const applyFilters = (overrides?: { model?: string; route?: string; source?: string; start?: string; end?: string }) => {
     const nextModel = (overrides?.model ?? modelInput).trim();
@@ -712,7 +727,7 @@ export default function RecordsPage() {
 
   useEffect(() => {
     resetAndFetch(false);
-  }, [appliedModel, appliedRoute, appliedSource, appliedStart, appliedEnd, resetAndFetch]);
+  }, [resetAndFetch]);
 
   const costTone = useCallback((cost: number) => {
     if (cost >= 5) return "bg-red-500/20 text-red-300 ring-1 ring-red-500/40";
@@ -773,16 +788,21 @@ export default function RecordsPage() {
         return <span className="font-semibold text-slate-300">{COLUMN_LABELS[columnKey]}</span>;
       }
 
+      const keyIndex = sortKeys.findIndex((key) => key.field === sortTarget);
+      const priority = keyIndex !== -1 ? keyIndex + 1 : undefined;
+      const order = keyIndex !== -1 ? sortKeys[keyIndex].order : undefined;
+
       return (
         <SortHeader
           label={COLUMN_LABELS[columnKey]}
-          active={sortField === sortTarget}
-          order={sortOrder}
+          priority={priority}
+          order={order}
+          showPriority={sortKeys.length > 1}
           onClick={() => handleSort(sortTarget)}
         />
       );
     },
-    [sortField, sortOrder, handleSort]
+    [sortKeys, handleSort]
   );
 
   const renderCellByColumn = useCallback(
@@ -984,6 +1004,7 @@ export default function RecordsPage() {
         </div>
         <div className="flex items-center gap-3 text-sm text-slate-300">
           <button
+            type="button"
             onClick={async () => {
               const inserted = await doSync();
               if (inserted > 0) {
@@ -1188,15 +1209,12 @@ export default function RecordsPage() {
             {columnPanelOpen ? (
               <div className="absolute right-0 z-30 mt-2 w-[300px] rounded-2xl border border-slate-700 bg-slate-900 p-3 shadow-xl">
                 {/* <div className="mb-2 text-xs text-slate-400">勾选显示列，按住手柄拖拽改顺序，表头右侧可拖拽列宽</div> */}
-                <div className="max-h-72 space-y-1 overflow-auto pr-1">
+                <ul className="max-h-72 space-y-1 overflow-auto pr-1">
                   {columnSettings.map((column) => (
-                    <div
+                    <li
                       key={column.key}
-                      draggable
-                      onDragStart={() => onColumnDragStart(column.key)}
                       onDragOver={(event) => onColumnDragOver(column.key, event)}
                       onDrop={(event) => onColumnDrop(column.key, event)}
-                      onDragEnd={onColumnDragEnd}
                       className="relative flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/60 px-2 py-1.5"
                     >
                       {dragIndicator?.key === column.key && dragIndicator.position === "before" ? (
@@ -1206,9 +1224,17 @@ export default function RecordsPage() {
                         <span className="pointer-events-none absolute left-2 right-2 bottom-0 h-px translate-y-1/2 bg-indigo-300/90 shadow-[0_0_6px_rgba(129,140,248,0.45)]" />
                       ) : null}
                       <label className="inline-flex items-center gap-2 text-sm text-slate-200">
-                        <span className="cursor-grab text-slate-500 active:cursor-grabbing" title="按住拖拽排序">
+                        <button
+                          type="button"
+                          draggable
+                          onDragStart={() => onColumnDragStart(column.key)}
+                          onDragEnd={onColumnDragEnd}
+                          className="cursor-grab text-slate-500 active:cursor-grabbing"
+                          title="按住拖拽排序"
+                          aria-label={`拖拽排序 ${COLUMN_LABELS[column.key]}`}
+                        >
                           <GripVertical className="h-4 w-4" />
-                        </span>
+                        </button>
                         <input
                           type="checkbox"
                           checked={column.visible}
@@ -1219,9 +1245,9 @@ export default function RecordsPage() {
                         <span>{COLUMN_LABELS[column.key]}</span>
                         <span className="text-xs text-slate-500">{column.width ? `${column.width}px` : "auto"}</span>
                       </label>
-                    </div>
+                    </li>
                   ))}
-                </div>
+                </ul>
               </div>
             ) : null}
           </div>
@@ -1244,16 +1270,16 @@ export default function RecordsPage() {
                         style={width ? { width: `${width}px`, minWidth: `${width}px` } : undefined}
                       >
                         {renderHeaderByColumn(columnKey)}
-                        <div
-                          role="separator"
-                          aria-orientation="vertical"
+                        <button
+                          type="button"
                           onMouseDown={(event) => beginResizeColumn(columnKey, event)}
+                          aria-label={`调整${COLUMN_LABELS[columnKey]}列宽`}
                           className="group absolute right-0 top-0 h-full w-3 cursor-col-resize select-none opacity-0 pointer-events-none transition-opacity duration-250 group-hover/col:opacity-100 group-hover/col:pointer-events-auto"
                           title="拖拽调整列宽"
                         >
                           <span className="absolute right-[4px] top-2 bottom-2 w-px rounded bg-gradient-to-b from-transparent via-slate-400/35 to-transparent opacity-70 transition-all duration-150 group-hover:via-indigo-300/60 group-hover:opacity-100" />
                           <span className="pointer-events-none absolute right-[3px] top-1/2 h-3 w-[3px] -translate-y-1/2 rounded-full bg-slate-400/35 transition-colors duration-150 group-hover:bg-indigo-300/65" />
-                        </div>
+                        </button>
                       </th>
                     );
                   })}
@@ -1317,7 +1343,8 @@ export default function RecordsPage() {
       </section>
 
       {syncStatus && (
-        <div
+        <button
+          type="button"
           onClick={() => closeSyncStatus()}
           className={`fixed right-6 top-26 z-50 max-w-[290px] cursor-pointer rounded-lg border px-4 py-3 shadow-lg transition-opacity hover:opacity-90 ${
             syncStatusClosing ? "animate-toast-out" : "animate-toast-in"
@@ -1333,7 +1360,7 @@ export default function RecordsPage() {
             <span className="text-xl animate-emoji-pop">{syncStatusType === "error" ? "❌" : syncStatusType === "warning" ? "⚠️" : "✅"}</span>
             <span className="text-sm font-medium">{syncStatus}</span>
           </div>
-        </div>
+        </button>
       )}
     </main>
   );
@@ -1374,14 +1401,14 @@ function ComboBox({
     darkMode ? "border-slate-700 bg-slate-800 text-white placeholder-slate-500" : "border-slate-300 bg-white text-slate-900 placeholder-slate-400"
   }`;
 
-  const closeDropdown = () => {
+  const closeDropdown = useCallback(() => {
     setIsClosing(true);
     setTimeout(() => {
       setOpen(false);
       setIsVisible(false);
       setIsClosing(false);
     }, 100);
-  };
+  }, []);
 
   useEffect(() => {
     if (open) {
@@ -1405,7 +1432,7 @@ function ComboBox({
 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [open]);
+  }, [open, closeDropdown]);
 
   return (
     <div className="relative" ref={containerRef}>
