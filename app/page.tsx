@@ -148,7 +148,7 @@ function buildHourlyLineStyle(pointCount: number, baseStrokeWidth: number) {
   };
 }
 
-type PieMode = "tokens" | "requests";
+type PieMode = "cost" | "tokens" | "requests";
 
 type ModelUsagePieChartProps = {
   models: UsageOverview["models"];
@@ -162,6 +162,18 @@ function ModelUsagePieChart({ models, pieMode, darkMode, fullscreen = false }: M
   const [pieTooltipOpen, setPieTooltipOpen] = useState(false);
   const pieChartContainerRef = useRef<HTMLDivElement | null>(null);
   const pieLegendClearTimerRef = useRef<number | null>(null);
+
+  const getPieMetricValue = useCallback((item: UsageOverview["models"][number], mode: PieMode) => {
+    if (mode === "cost") return item.cost;
+    if (mode === "tokens") return item.tokens;
+    return item.requests;
+  }, []);
+
+  const formatPieMetricValue = useCallback((value: number, mode: PieMode) => {
+    if (mode === "cost") return formatCurrency(value);
+    if (mode === "tokens") return formatCompactNumber(value);
+    return formatNumberWithCommas(value);
+  }, []);
 
   const cancelPieLegendClear = useCallback(() => {
     if (pieLegendClearTimerRef.current !== null) {
@@ -208,17 +220,18 @@ function ModelUsagePieChart({ models, pieMode, darkMode, fullscreen = false }: M
   useEffect(() => () => cancelPieLegendClear(), [cancelPieLegendClear]);
 
   const legendItems = useMemo(() => {
-    const total = models.reduce((sum, item) => sum + item[pieMode], 0);
+    const total = models.reduce((sum, item) => sum + getPieMetricValue(item, pieMode), 0);
     const indexByModel = new Map(models.map((item, index) => [item.model, index]));
 
     return [...models]
-      .sort((a, b) => b[pieMode] - a[pieMode])
+      .sort((a, b) => getPieMetricValue(b, pieMode) - getPieMetricValue(a, pieMode))
       .map((item) => {
         const originalIndex = indexByModel.get(item.model) ?? 0;
-        const percent = total > 0 ? (item[pieMode] / total) * 100 : 0;
-        return { item, originalIndex, percent };
+        const value = getPieMetricValue(item, pieMode);
+        const percent = total > 0 ? (value / total) * 100 : 0;
+        return { item, originalIndex, percent, value };
       });
-  }, [models, pieMode]);
+  }, [getPieMetricValue, models, pieMode]);
 
   const containerClassName = fullscreen ? "flex-1" : "shrink-0 w-64";
   const legendClassName = fullscreen ? "w-80 overflow-y-auto pr-2 space-y-2 custom-scrollbar" : "flex-1 overflow-y-auto pr-2 space-y-1 custom-scrollbar";
@@ -277,6 +290,10 @@ function ModelUsagePieChart({ models, pieMode, darkMode, fullscreen = false }: M
                     <p className={`mb-2 font-medium text-sm ${darkMode ? "text-slate-50" : "text-slate-900"}`}>{data.model}</p>
                     <div className="space-y-1">
                       <div className="flex items-center gap-2 text-sm">
+                        <span className="text-amber-400 font-medium">费用:</span>
+                        <span className={darkMode ? "text-slate-50" : "text-slate-700"}>{formatCurrency(data.cost)}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-sm">
                         <span className="text-blue-400 font-medium">请求数:</span>
                         <span className={darkMode ? "text-slate-50" : "text-slate-700"}>{formatNumberWithCommas(data.requests)}</span>
                       </div>
@@ -293,7 +310,7 @@ function ModelUsagePieChart({ models, pieMode, darkMode, fullscreen = false }: M
         </ResponsiveContainer>
       </div>
       <div className={legendClassName}>
-        {legendItems.map(({ item, originalIndex, percent }) => {
+        {legendItems.map(({ item, originalIndex, percent, value }) => {
           const isHighlighted = hoveredPieIndex === null || hoveredPieIndex === originalIndex;
           return (
             <div
@@ -327,7 +344,7 @@ function ModelUsagePieChart({ models, pieMode, darkMode, fullscreen = false }: M
               <div className={`${fullscreen ? "text-sm ml-6" : "text-xs ml-5"} ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
                 <span className="font-semibold">{percent.toFixed(1)}%</span>
                 <span className="mx-1.5">·</span>
-                <span>{pieMode === "tokens" ? formatCompactNumber(item.tokens) : formatNumberWithCommas(item.requests)} {pieMode === "tokens" ? "tokens" : "次"}</span>
+                <span>{formatPieMetricValue(value, pieMode)}{pieMode === "tokens" ? " tokens" : pieMode === "requests" ? " 次" : ""}</span>
               </div>
             </div>
           );
@@ -420,7 +437,7 @@ export default function DashboardPage() {
   const [pendingUsageRequests, setPendingUsageRequests] = useState(0);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [ready, setReady] = useState(false);
-  const [pieMode, setPieMode] = useState<PieMode>("tokens");
+  const [pieMode, setPieMode] = useState<PieMode>("cost");
   const [darkMode, setDarkMode] = useState(true);
   const [editingPrice, setEditingPrice] = useState<ModelPrice | null>(null);
   const [editForm, setEditForm] = useState<PriceForm>({ model: "", inputPricePer1M: "", cachedInputPricePer1M: "", outputPricePer1M: "" });
@@ -1755,12 +1772,21 @@ export default function DashboardPage() {
               <div className="flex items-center gap-2">
                 <div className={`flex items-center gap-1 rounded-lg border p-0.5 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-300 bg-slate-100"}`}>
                   <button
+                    type="button"
+                    onClick={() => setPieMode("cost")}
+                    className={`rounded-md px-2 py-1 text-xs font-medium transition ${pieMode === "cost" ? "bg-indigo-600 text-white" : darkMode ? "text-slate-400 hover:text-slate-200" : "text-slate-600 hover:text-slate-900"}`}
+                  >
+                    费用
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setPieMode("tokens")}
                     className={`rounded-md px-2 py-1 text-xs font-medium transition ${pieMode === "tokens" ? "bg-indigo-600 text-white" : darkMode ? "text-slate-400 hover:text-slate-200" : "text-slate-600 hover:text-slate-900"}`}
                   >
                     Token
                   </button>
                   <button
+                    type="button"
                     onClick={() => setPieMode("requests")}
                     className={`rounded-md px-2 py-1 text-xs font-medium transition ${pieMode === "requests" ? "bg-indigo-600 text-white" : darkMode ? "text-slate-400 hover:text-slate-200" : "text-slate-600 hover:text-slate-900"}`}
                   >
@@ -1785,7 +1811,7 @@ export default function DashboardPage() {
               ) : (
               <>
                 <ModelUsagePieChart
-                  key={`dashboard-${pieMode}-${overviewData.models.map((item) => `${item.model}:${item.requests}:${item.tokens}`).join("|")}`}
+                  key={`dashboard-${pieMode}-${overviewData.models.map((item) => `${item.model}:${item.requests}:${item.tokens}:${item.cost}`).join("|")}`}
                   models={overviewData.models}
                   pieMode={pieMode}
                   darkMode={darkMode}
@@ -2390,6 +2416,17 @@ export default function DashboardPage() {
                 <div className="flex items-center gap-1 pr-5">
                   <button
                     type="button"
+                    onClick={() => setPieMode("cost")}
+                    className={`rounded-md border px-2 py-1 text-xs transition ${
+                      pieMode === "cost"
+                        ? "border-indigo-500 bg-indigo-600 text-white"
+                        : darkMode ? "border-slate-700 bg-slate-800 text-slate-300 hover:border-slate-500" : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
+                    }`}
+                  >
+                    费用
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setPieMode("tokens")}
                     className={`rounded-md border px-2 py-1 text-xs transition ${
                       pieMode === "tokens"
@@ -2414,7 +2451,7 @@ export default function DashboardPage() {
               </div>
               <div className="flex gap-6 flex-1">
                 <ModelUsagePieChart
-                  key={`fullscreen-${pieMode}-${overviewData.models.map((item) => `${item.model}:${item.requests}:${item.tokens}`).join("|")}`}
+                  key={`fullscreen-${pieMode}-${overviewData.models.map((item) => `${item.model}:${item.requests}:${item.tokens}:${item.cost}`).join("|")}`}
                   models={overviewData.models}
                   pieMode={pieMode}
                   darkMode={darkMode}
