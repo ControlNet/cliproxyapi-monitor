@@ -53,6 +53,7 @@ export async function getExplorePoints(
     end?: string | Date | null;
     route?: string | null;
     name?: string | null;
+    filterInvalid?: boolean;
   }
 ) {
   const startDate = parseDateInput(opts?.start);
@@ -82,6 +83,7 @@ export async function getExplorePoints(
   }
   const where = and(...whereParts);
   const baseWhere = and(...baseWhereParts);
+  const shouldFilterInvalid = opts?.filterInvalid !== false;
 
   const credentialNameExpr = sql<string>`coalesce(
     nullif((select af.name from auth_file_mappings af where af.auth_id = ${usageRecords.authIndex} limit 1), ''),
@@ -89,11 +91,17 @@ export async function getExplorePoints(
     '-'
   )`;
 
-  const [totalRows, availableRouteRows, availableNameRows] = await Promise.all([
+  const zeroTokensWhere = and(...whereParts, sql`${usageRecords.totalTokens} = 0`);
+
+  const [totalRows, zeroTokensRows, availableRouteRows, availableNameRows] = await Promise.all([
     db
       .select({ count: sql<number>`count(*)` })
       .from(usageRecords)
       .where(where),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(usageRecords)
+      .where(zeroTokensWhere),
     db
       .select({ route: usageRecords.route })
       .from(usageRecords)
@@ -111,16 +119,19 @@ export async function getExplorePoints(
   ]);
 
   const total = Number(totalRows?.[0]?.count ?? 0);
+  const zeroTokensCount = Number(zeroTokensRows?.[0]?.count ?? 0);
   const filters = {
     routes: availableRouteRows.map((row) => row.route).filter(Boolean),
     names: availableNameRows.map((row) => row.name).filter((name): name is string => Boolean(name) && name !== "-")
   };
 
   if (total <= 0) {
-    return { days, total: 0, returned: 0, step: 1, points: [] as ExplorePoint[], filters };
+    return { days, total: 0, zeroTokensCount: 0, returned: 0, step: 1, points: [] as ExplorePoint[], filters };
   }
 
-  const step = total > maxPoints ? Math.ceil(total / maxPoints) : 1;
+  const pointsWhere = shouldFilterInvalid ? and(...whereParts, sql`${usageRecords.totalTokens} != 0`) : where;
+  const effectiveTotal = shouldFilterInvalid ? Math.max(0, total - zeroTokensCount) : total;
+  const step = effectiveTotal > maxPoints ? Math.ceil(effectiveTotal / maxPoints) : 1;
 
   // Use row_number() sampling for stable, time-ordered down-sampling.
   const points = await db
@@ -145,7 +156,7 @@ export async function getExplorePoints(
           ${usageRecords.model} as model,
           row_number() over (order by ${usageRecords.occurredAt}) as rn
         from ${usageRecords}
-        where ${where}
+        where ${pointsWhere}
       ) as sampled`
     )
     .where(sql`(sampled.rn - 1) % ${step} = 0`)
@@ -155,6 +166,7 @@ export async function getExplorePoints(
   return {
     days,
     total,
+    zeroTokensCount,
     returned: points.length,
     step,
     filters,

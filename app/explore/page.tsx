@@ -17,12 +17,30 @@ type ExplorePoint = {
 type ExploreResponse = {
   days: number;
   total: number;
+  zeroTokensCount?: number;
   returned: number;
   step: number;
   points: ExplorePoint[];
   filters?: { routes: string[]; names: string[] };
   error?: string;
 };
+
+type LegendSort = "alpha" | "tokens" | "requests";
+
+const LEGEND_SORT_CYCLE: LegendSort[] = ["alpha", "tokens", "requests"];
+const LEGEND_SORT_LABELS: Record<LegendSort, string> = {
+  alpha: "首字母",
+  tokens: "Token用量",
+  requests: "请求次数"
+};
+const LEGEND_SORT_STORAGE_KEY = "exploreLegendSort";
+
+function parseLegendSort(raw: string | null): LegendSort {
+  if (raw === "tokens" || raw === "requests" || raw === "alpha") {
+    return raw;
+  }
+  return "alpha";
+}
 
 // 高对比度明亮色卡 - 20 色高饱和高明度，确保各色间强区分
 // 按色相分布均匀，饱和度 70-90%，明度 55-75%，适配暗色主题
@@ -309,6 +327,8 @@ type ModelLegendProps = {
   onMouseEnter: (model: string) => void;
   onMouseLeave: () => void;
   onClick: (model: string) => void;
+  legendSort: LegendSort;
+  onToggleLegendSort: () => void;
 };
 
 const ModelLegend = memo(function ModelLegend({
@@ -318,13 +338,26 @@ const ModelLegend = memo(function ModelLegend({
   onMouseEnter,
   onMouseLeave,
   onClick,
+  legendSort,
+  onToggleLegendSort,
 }: ModelLegendProps) {
   if (models.length === 0) return null;
   
   return (
     <div className="mt-3 rounded-xl bg-slate-900/30 p-3 ring-1 ring-slate-800">
       <div className="flex flex-wrap items-center gap-3 text-xs text-slate-300">
-        <span className="text-slate-400">模型图例（悬停高亮，点击隐藏）</span>
+        <button
+          type="button"
+          onClick={onToggleLegendSort}
+          className="flex items-center gap-1.5 text-slate-400 transition-colors hover:text-slate-200"
+          title="点击切换排序方式"
+        >
+          <span>模型图例</span>
+          <span className="rounded bg-slate-700/70 px-1 py-0.5 text-[10px] text-slate-300">
+            {LEGEND_SORT_LABELS[legendSort]} ↕
+          </span>
+        </button>
+        <span className="text-slate-500">（悬停高亮，点击隐藏）</span>
       </div>
       <div className="mt-2 max-h-20 overflow-auto pr-1">
         <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-slate-300">
@@ -446,8 +479,18 @@ export default function ExplorePage() {
   
   // 堆叠面积图开关
   const [showStackedArea, setShowStackedArea] = useState(true);
+  const [filterInvalidPoints, setFilterInvalidPoints] = useState(true);
+  const [legendSort, setLegendSort] = useState<LegendSort>(() => {
+    if (typeof window === "undefined") return "alpha";
+    return parseLegendSort(window.localStorage.getItem(LEGEND_SORT_STORAGE_KEY));
+  });
   
   const scatterTooltipRef = useRef<ScatterTooltipHandle>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(LEGEND_SORT_STORAGE_KEY, legendSort);
+  }, [legendSort]);
 
   // 持久化本页自定义选择，不回写仪表盘
   useEffect(() => {
@@ -1167,6 +1210,7 @@ export default function ExplorePage() {
         }
         if (appliedRoute) params.set("route", appliedRoute);
         if (appliedName) params.set("name", appliedName);
+        if (!filterInvalidPoints) params.set("filterInvalid", "0");
 
         const res = await fetch(`/api/explore?${params.toString()}`, { cache: "no-store" });
         const json: ExploreResponse = await res.json();
@@ -1195,15 +1239,40 @@ export default function ExplorePage() {
     return () => {
       cancelled = true;
     };
-  }, [rangeMode, customStart, customEnd, rangeDays, appliedRoute, appliedName]);
+  }, [rangeMode, customStart, customEnd, rangeDays, appliedRoute, appliedName, filterInvalidPoints]);
+
+  const modelStats = useMemo(() => {
+    const stats = new Map<string, { tokens: number; requests: number }>();
+    for (const point of points) {
+      const current = stats.get(point.model) ?? { tokens: 0, requests: 0 };
+      current.tokens += point.tokens;
+      current.requests += 1;
+      stats.set(point.model, current);
+    }
+    return stats;
+  }, [points]);
 
   const models = useMemo(() => {
     const set = new Set<string>();
     for (const p of points) {
       if (p.model) set.add(p.model);
     }
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [points]);
+    const allModels = Array.from(set);
+    if (legendSort === "tokens") {
+      return allModels.sort((a, b) => (modelStats.get(b)?.tokens ?? 0) - (modelStats.get(a)?.tokens ?? 0));
+    }
+    if (legendSort === "requests") {
+      return allModels.sort((a, b) => (modelStats.get(b)?.requests ?? 0) - (modelStats.get(a)?.requests ?? 0));
+    }
+    return allModels.sort((a, b) => a.localeCompare(b));
+  }, [points, legendSort, modelStats]);
+
+  const toggleLegendSort = useCallback(() => {
+    setLegendSort((current) => {
+      const index = LEGEND_SORT_CYCLE.indexOf(current);
+      return LEGEND_SORT_CYCLE[(index + 1) % LEGEND_SORT_CYCLE.length];
+    });
+  }, []);
 
   const isUsingGlobalRange = selectionSource === "global";
 
@@ -1617,6 +1686,17 @@ export default function ExplorePage() {
           <div>
             <span className="text-slate-400">渲染点数：</span>
             <span>{formatNumberWithCommas(visiblePoints.length)}</span>
+            {(data?.zeroTokensCount ?? 0) > 0 ? (
+              <button
+                type="button"
+                onClick={() => setFilterInvalidPoints((value) => !value)}
+                className="ml-1 text-slate-500 transition-colors hover:text-slate-300"
+              >
+                {filterInvalidPoints
+                  ? `（已过滤 ${formatNumberWithCommas(data?.zeroTokensCount ?? 0)} 无效点）`
+                  : "（过滤无效点？）"}
+              </button>
+            ) : null}
           </div>
           {zoomDomain && dataBounds && (() => {
             const totalXRange = dataBounds.x[1] - dataBounds.x[0];
@@ -1710,6 +1790,8 @@ export default function ExplorePage() {
           onMouseEnter={handleLegendMouseEnter}
           onMouseLeave={handleLegendMouseLeave}
           onClick={handleLegendClick}
+          legendSort={legendSort}
+          onToggleLegendSort={toggleLegendSort}
         />
 
         <div className="mt-4 flex h-[75vh] flex-col gap-0">
