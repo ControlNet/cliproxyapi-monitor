@@ -324,7 +324,7 @@ function ModelUsagePieChart({ models, pieMode, darkMode, fullscreen = false, pie
             <button
               type="button"
               key={item.model}
-              className={`rounded-lg ${fullscreen ? "p-3" : "p-2"} transition cursor-pointer ${
+              className={`w-full rounded-lg text-left ${fullscreen ? "p-3" : "p-2"} transition cursor-pointer ${
                 isHighlighted ? (darkMode ? "bg-slate-700/30" : "bg-slate-100") : "opacity-40"
               } ${darkMode ? "hover:bg-slate-700/50" : "hover:bg-slate-200"}`}
               onMouseEnter={() => {
