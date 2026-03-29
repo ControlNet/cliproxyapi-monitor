@@ -22,7 +22,9 @@ function toPositiveInt(raw: string | undefined, fallback: number) {
   return value;
 }
 
-const DEFAULT_USAGE_INSERT_BATCH_SIZE = Math.max(1, Math.floor(2_000 / 13));
+// Drizzle can overflow the JS call stack when building very large multi-row inserts
+// even before Postgres rejects the bind payload, so keep the default batch modest.
+const DEFAULT_USAGE_INSERT_BATCH_SIZE = 64;
 const USAGE_TIMEOUT_MS = toPositiveInt(process.env.NEXT_PUBLIC_SYNC_TIMEOUT_MS, 60_000);
 const AUTH_FILES_INSERT_CHUNK_SIZE = toPositiveInt(process.env.AUTH_FILES_INSERT_CHUNK_SIZE, 500);
 const USAGE_INSERT_BATCH_SIZE = toPositiveInt(process.env.USAGE_INSERT_CHUNK_SIZE, DEFAULT_USAGE_INSERT_BATCH_SIZE);
@@ -154,6 +156,10 @@ function isBindProtocolError(error: unknown) {
   return typeof message === "string" && message.includes("bind message");
 }
 
+function isStackOverflowError(error: unknown) {
+  return error instanceof RangeError && error.message.includes("Maximum call stack size exceeded");
+}
+
 async function insertUsageRows(rows: UsageRow[]) {
   if (rows.length === 0) return 0;
 
@@ -172,7 +178,7 @@ async function insertUsageRows(rows: UsageRow[]) {
     try {
       return await insertBatch(batch);
     } catch (error) {
-      if (!isBindProtocolError(error) || batch.length <= 1) {
+      if ((!isBindProtocolError(error) && !isStackOverflowError(error)) || batch.length <= 1) {
         throw error;
       }
 
@@ -180,10 +186,11 @@ async function insertUsageRows(rows: UsageRow[]) {
       const left = batch.slice(0, middle);
       const right = batch.slice(middle);
 
-      console.warn("/api/sync usage insert hit bind protocol issue, retrying with smaller batch", {
+      console.warn("/api/sync usage insert hit batch-size issue, retrying with smaller batch", {
         failedBatchSize: batch.length,
         leftBatchSize: left.length,
-        rightBatchSize: right.length
+        rightBatchSize: right.length,
+        reason: isStackOverflowError(error) ? "stack_overflow" : "bind_protocol"
       });
 
       const leftInserted = await insertBatchWithRetry(left);
