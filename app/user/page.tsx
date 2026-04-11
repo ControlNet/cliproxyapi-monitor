@@ -249,9 +249,6 @@ function QuotaPanel({ quota }: { quota: UserQuotaResponse }) {
           </div>
           <div>
             <h2 className="text-xl font-semibold text-white">当前用户额度</h2>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-400">
-              这里只显示与当前登录用户路由绑定的安全额度摘要，不返回 auth index、文件名、邮箱、token 或任何原始上游 payload。
-            </p>
           </div>
         </div>
 
@@ -262,13 +259,18 @@ function QuotaPanel({ quota }: { quota: UserQuotaResponse }) {
         </div>
       </div>
 
-      <div className={`mt-5 rounded-2xl border px-4 py-3 ${toneStyles.banner}`}>
-        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <span className="text-sm font-semibold">{quota.status.title}</span>
-          {quota.creditSummary ? <span className={`text-xs ${toneStyles.meta}`}>{quota.creditSummary}</span> : null}
+      {quota.creditSummary ||
+      (quota.status.description && quota.status.description.trim()) ||
+      quota.status.tone === "error" ||
+      quota.status.tone === "warning" ? (
+        <div className={`mt-5 rounded-2xl border px-4 py-3 ${toneStyles.banner}`}>
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <span className="text-sm font-semibold">{quota.status.title}</span>
+            {quota.creditSummary ? <span className={`text-xs ${toneStyles.meta}`}>{quota.creditSummary}</span> : null}
+          </div>
+          {quota.status.description ? <p className={`mt-2 text-sm ${toneStyles.meta}`}>{quota.status.description}</p> : null}
         </div>
-        {quota.status.description ? <p className={`mt-2 text-sm ${toneStyles.meta}`}>{quota.status.description}</p> : null}
-      </div>
+      ) : null}
 
       {quota.available && quota.items.length > 0 ? (
         <div className="mt-5 grid gap-3 md:grid-cols-2">

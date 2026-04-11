@@ -656,7 +656,6 @@ export default function UserRecordsClient() {
             </div>
 
             <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-xs leading-6 text-slate-400">
-              <p>仅展示安全字段：时间、模型、Tokens、输入、输出、思考、缓存、费用、状态。</p>
               <p>当前筛选：{filterSummary}</p>
             </div>
           </div>

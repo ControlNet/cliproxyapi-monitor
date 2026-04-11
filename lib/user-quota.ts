@@ -375,8 +375,8 @@ function summarizeStatus(items: UserQuotaItem[]) {
 
   return {
     tone: "ok" as const,
-    title: "配额摘要已更新",
-    description: "当前仅返回安全摘要字段，不包含 auth index、文件名或原始响应。"
+    title: "配额状态正常",
+    description: ""
   };
 }
 
