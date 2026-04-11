@@ -6,6 +6,14 @@ function normalizeBaseUrl(raw: string | undefined) {
   return trimmed.endsWith("/v0/management") ? trimmed : `${trimmed}/v0/management`;
 }
 
+function isEnabled(raw: string | undefined) {
+  return /^(1|true|yes|on)$/i.test(raw ?? "");
+}
+
+function toServiceBaseUrl(managementUrl: string) {
+  return managementUrl.replace(/\/v0\/management\/?$/, "");
+}
+
 function isValidTimezone(value: string): boolean {
   try {
     Intl.DateTimeFormat(undefined, { timeZone: value });
@@ -24,6 +32,7 @@ function detectSystemTimezone(): string {
 }
 
 const baseUrl = normalizeBaseUrl(process.env.CLIPROXY_API_BASE_URL);
+const serviceBaseUrl = baseUrl ? toServiceBaseUrl(baseUrl) : "";
 const password = process.env.PASSWORD || process.env.CLIPROXY_SECRET_KEY || "";
 const cronSecret = process.env.CRON_SECRET || "";
 const postgresUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || "";
@@ -32,12 +41,16 @@ const timezone = detectSystemTimezone();
 export const config = {
   cliproxy: {
     baseUrl,
+    serviceBaseUrl,
+    modelsUrl: serviceBaseUrl ? `${serviceBaseUrl}/v1/models` : "",
     apiKey: process.env.CLIPROXY_SECRET_KEY || ""
   },
   postgresUrl,
   password,
   cronSecret,
-  timezone
+  timezone,
+  allowUserSeeTotalUsage: isEnabled(process.env.ALLOW_USER_SEE_TOTAL_USAGE),
+  allowUserSeeQuota: isEnabled(process.env.ALLOW_USER_SEE_QUOTA)
 };
 
 export function assertEnv() {

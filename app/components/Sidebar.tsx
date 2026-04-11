@@ -100,6 +100,14 @@ export default function Sidebar() {
     }
   };
 
+  const isActiveLink = (href: string) => {
+    if (href === "/") {
+      return pathname === href;
+    }
+
+    return pathname === href || pathname.startsWith(`${href}/`);
+  };
+
   return (
     <aside className="fixed left-0 top-0 z-40 flex h-screen w-56 flex-col border-r border-slate-800 bg-slate-950 py-6">
       <div className="px-5">
@@ -108,7 +116,7 @@ export default function Sidebar() {
       </div>
       <nav className="mt-8 flex-1 space-y-1 px-3">
         {links.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href;
+          const active = isActiveLink(href);
           return (
             <Link
               key={href}
@@ -144,6 +152,7 @@ export default function Sidebar() {
             上游使用统计
           </div>
           <button
+            type="button"
             onClick={handleUsageToggle}
             disabled={usageStatsLoading || usageStatsEnabled === null}
             className={`rounded-full px-3 py-1 text-sm font-semibold transition ${
@@ -166,6 +175,7 @@ export default function Sidebar() {
             <Github className="h-4 w-4" />
           </a>
           <button
+            type="button"
             onClick={handleLogout}
             disabled={loggingOut}
             className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm font-medium text-slate-300 transition hover:bg-slate-800 hover:text-white disabled:opacity-50"

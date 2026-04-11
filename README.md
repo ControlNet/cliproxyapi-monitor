@@ -40,7 +40,7 @@ docker build -t <your-dockerhub-username>/cliproxyapi-monitor:latest .
 | `dashboard.image` | Docker Hub 预构建镜像 | `controlnet/cliproxyapi-monitor:latest` |
 | `dashboard.ports` | dashboard 宿主机端口（固定） | `8318:3000` |
 | `dashboard.environment.PASSWORD` | 看板访问密码；默认留空（将回退使用 config.yaml 的 secret） | `""` |
-| `dashboard.environment.AUTH_COOKIE_SECURE` | 登录 cookie 的 `Secure` 标记（HTTPS 建议改为 `true`） | `false` |
+| `dashboard.environment.AUTH_COOKIE_SECURE` | admin / user 两类登录 cookie 的 `Secure` 标记（HTTPS 建议改为 `true`） | `false` |
 
 ### 4) 可选环境变量（数据库 / 同步调优）
 
@@ -52,9 +52,18 @@ docker build -t <your-dockerhub-username>/cliproxyapi-monitor:latest .
 | `DATABASE_POOL_IDLE_TIMEOUT_MS` | 空闲连接超时（毫秒） | `10000` |
 | `DATABASE_POOL_CONNECTION_TIMEOUT_MS` | 获取连接超时（毫秒） | `5000` |
 | `DATABASE_POOL_MAX_USES` | 单连接最大复用次数 | `7500` |
+| `ALLOW_USER_SEE_TOTAL_USAGE` | 是否允许 `/user` 切换到“全站聚合”安全视图；默认关闭 | `false` |
+| `ALLOW_USER_SEE_QUOTA` | 是否允许 `/user` 显示安全配额摘要与 `/api/user/quota`；默认关闭 | `false` |
 | `NEXT_PUBLIC_SYNC_TIMEOUT_MS` | `/api/sync` 前后端共享超时（毫秒） | `60000` |
 | `AUTH_FILES_INSERT_CHUNK_SIZE` | `auth_file_mappings` 批量写入块大小 | `500` |
 | `USAGE_INSERT_CHUNK_SIZE` | `usage_records` 批量写入块大小 | `153` |
+
+### 4.1) 用户模式边界说明
+
+- `/user` 与 `/api/user/*` 只信任独立的 `dashboard_user_session`，不会复用管理员 `dashboard_auth`。
+- `ALLOW_USER_SEE_TOTAL_USAGE=false` 时，`/user` 不会保留“全站聚合”视角；客户端最多探测一次 `view=global`，服务端会返回 `403` 且不暴露管理接口。
+- `ALLOW_USER_SEE_QUOTA=false` 时，`/api/user/quota` 直接返回 `404`，`/user` 页面不会渲染配额摘要区块。
+- `/api/logs`、`/api/request-error-logs`、`/api/usage-statistics-enabled`、`/api/management-url`、`/api/sync` 仍属于管理员/运维能力，user session 无法成功访问。
 
 ### 5) 常用运维命令
 

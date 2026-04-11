@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { config, assertEnv } from "@/lib/config";
+import { requireAdminRequest } from "@/lib/admin-auth";
 
 export const runtime = "nodejs";
 
@@ -15,6 +16,11 @@ function authHeaders() {
 }
 
 async function handleToggle(request: Request) {
+  const unauthorizedResponse = await requireAdminRequest(request);
+  if (unauthorizedResponse) {
+    return unauthorizedResponse;
+  }
+
   try {
     assertEnv();
   } catch (error) {
@@ -45,7 +51,12 @@ async function handleToggle(request: Request) {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const unauthorizedResponse = await requireAdminRequest(request);
+  if (unauthorizedResponse) {
+    return unauthorizedResponse;
+  }
+
   try {
     assertEnv();
   } catch (error) {

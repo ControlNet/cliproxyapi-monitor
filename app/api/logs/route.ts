@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { config, assertEnv } from "@/lib/config";
+import { requireAdminRequest } from "@/lib/admin-auth";
 
 export const runtime = "nodejs";
 
@@ -12,6 +13,11 @@ function endpoint(after?: string | null) {
 }
 
 export async function GET(request: Request) {
+  const unauthorizedResponse = await requireAdminRequest(request);
+  if (unauthorizedResponse) {
+    return unauthorizedResponse;
+  }
+
   try {
     assertEnv();
   } catch (error) {

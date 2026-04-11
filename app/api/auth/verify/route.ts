@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { config } from "@/lib/config";
+import { clearUserSessionCookie, setUserSessionCookie } from "@/lib/user-session";
 
 export const runtime = "nodejs";
 
 const PASSWORD = config.password;
-const COOKIE_NAME = "dashboard_auth";
+const ADMIN_COOKIE_NAME = "dashboard_auth";
 const COOKIE_MAX_AGE = 30 * 24 * 60 * 60; // 30 days
 const cookieSecure = /^(1|true|yes|on)$/i.test(process.env.AUTH_COOKIE_SECURE ?? "");
+const expectedAdminTokenPromise = PASSWORD ? hashPassword(PASSWORD) : null;
 
 // 速率限制配置
 const ATTEMPTS_PER_WINDOW = 10; // 每个时间窗口允许的尝试次数
@@ -51,16 +53,107 @@ function decodeBasicToken(encoded: string) {
   throw new Error("No base64 decoder available");
 }
 
+function isUserPath(pathname: string) {
+  return pathname === "/user" || pathname.startsWith("/user/") || pathname === "/api/user" || pathname.startsWith("/api/user/");
+}
+
+function normalizeFrom(request: NextRequest) {
+  const from = request.nextUrl.searchParams.get("from")?.trim() || "";
+  if (!from || !from.startsWith("/") || from.startsWith("//")) return null;
+  if (from === "/login" || from.startsWith("/api/auth")) return null;
+  return from;
+}
+
+function getRedirectTarget(role: "admin" | "user", from: string | null) {
+  if (role === "user") {
+    return from && isUserPath(from) ? from : "/user";
+  }
+
+  if (!from || isUserPath(from)) {
+    return "/";
+  }
+
+  return from;
+}
+
+function setAdminSessionCookie(response: NextResponse, token: string) {
+  response.cookies.set({
+    name: ADMIN_COOKIE_NAME,
+    value: token,
+    httpOnly: true,
+    sameSite: "lax",
+    secure: cookieSecure,
+    maxAge: COOKIE_MAX_AGE,
+    path: "/"
+  });
+
+  return response;
+}
+
+function clearAdminSessionCookie(response: NextResponse) {
+  response.cookies.set({
+    name: ADMIN_COOKIE_NAME,
+    value: "",
+    httpOnly: true,
+    sameSite: "lax",
+    secure: cookieSecure,
+    maxAge: 0,
+    path: "/"
+  });
+
+  return response;
+}
+
+async function validateUserServiceKey(providedCredential: string) {
+  if (!config.cliproxy.modelsUrl) {
+    return {
+      ok: false,
+      invalid: false,
+      status: 500,
+      error: "服务端未配置 CLIPROXY_API_BASE_URL"
+    };
+  }
+
+  try {
+    const response = await fetch(config.cliproxy.modelsUrl, {
+      headers: {
+        Authorization: `Bearer ${providedCredential}`,
+        Accept: "application/json"
+      },
+      cache: "no-store"
+    });
+
+    if (response.ok) {
+      return { ok: true, invalid: false, status: 200, error: null };
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      return { ok: false, invalid: true, status: response.status, error: null };
+    }
+
+    return {
+      ok: false,
+      invalid: false,
+      status: 502,
+      error: `上游服务密钥校验失败 (${response.status})`
+    };
+  } catch {
+    return {
+      ok: false,
+      invalid: false,
+      status: 502,
+      error: "无法连接上游服务校验凭据"
+    };
+  }
+}
+
 export async function POST(request: NextRequest) {
   cleanupExpired();
-
-  if (!PASSWORD) {
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
-  }
 
   const clientIP = getClientIP(request);
   const now = Date.now();
   let record = failedAttempts.get(clientIP);
+  const from = normalizeFrom(request);
 
   // 检查是否在锁定期
   if (record && record.lockoutUntil > now) {
@@ -87,72 +180,90 @@ export async function POST(request: NextRequest) {
   try {
     const decoded = decodeBasicToken(authHeader.slice(6));
     const [, providedPassword] = decoded.split(":");
-    const providedToken = await hashPassword(providedPassword ?? "");
-    const expectedToken = await hashPassword(PASSWORD);
+    const providedCredential = (providedPassword ?? "").trim();
 
-    if (providedToken === expectedToken) {
-      // 登录成功，清除失败记录
-      failedAttempts.delete(clientIP);
-      
-      const response = NextResponse.json({ success: true });
-      response.cookies.set({
-        name: COOKIE_NAME,
-        value: providedToken,
-        httpOnly: true,
-        sameSite: "lax",
-        secure: cookieSecure,
-        maxAge: COOKIE_MAX_AGE,
-        path: "/"
-      });
-      return response;
-    } else {
-      // 登录失败，记录尝试
-      if (!record) {
-        record = { 
-          totalAttempts: 0, 
-          lockoutUntil: 0, 
-          lockoutDuration: INITIAL_LOCKOUT_MS 
-        };
+    if (PASSWORD && providedCredential) {
+      const providedToken = await hashPassword(providedCredential);
+      const expectedToken = expectedAdminTokenPromise ? await expectedAdminTokenPromise : null;
+
+      if (expectedToken && providedToken === expectedToken) {
+        failedAttempts.delete(clientIP);
+
+        const response = NextResponse.json({
+          success: true,
+          role: "admin",
+          redirectTo: getRedirectTarget("admin", from)
+        });
+        clearUserSessionCookie(response);
+        setAdminSessionCookie(response, providedToken);
+        return response;
       }
-      
-      record.totalAttempts++;
-      
-      // 每 10 次失败触发一次锁定
-      if (record.totalAttempts % ATTEMPTS_PER_WINDOW === 0) {
-        record.lockoutUntil = now + record.lockoutDuration;
-        const lockoutMinutes = Math.ceil(record.lockoutDuration / 60000);
-        
-        failedAttempts.set(clientIP, record);
-        
-        // 下次锁定时间翻倍
-        record.lockoutDuration *= 2;
-        
-        return NextResponse.json(
-          {
-            error: `连续错误 ${ATTEMPTS_PER_WINDOW} 次，账户已锁定 ${lockoutMinutes} 分钟`,
-            lockoutUntil: record.lockoutUntil,
-            isLocked: true,
-            totalAttempts: record.totalAttempts
-          },
-          { status: 429 }
-        );
+    }
+
+    if (providedCredential) {
+      const userValidation = await validateUserServiceKey(providedCredential);
+
+      if (userValidation.ok) {
+        failedAttempts.delete(clientIP);
+
+        const response = NextResponse.json({
+          success: true,
+          role: "user",
+          redirectTo: getRedirectTarget("user", from)
+        });
+
+        clearAdminSessionCookie(response);
+        await setUserSessionCookie(response, { route: providedCredential });
+        return response;
       }
-      
+
+      if (!userValidation.invalid) {
+        return NextResponse.json({ error: userValidation.error ?? "服务端校验失败" }, { status: userValidation.status });
+      }
+    }
+
+    if (!record) {
+      record = {
+        totalAttempts: 0,
+        lockoutUntil: 0,
+        lockoutDuration: INITIAL_LOCKOUT_MS
+      };
+    }
+
+    record.totalAttempts++;
+
+    if (record.totalAttempts % ATTEMPTS_PER_WINDOW === 0) {
+      record.lockoutUntil = now + record.lockoutDuration;
+      const lockoutMinutes = Math.ceil(record.lockoutDuration / 60000);
+
       failedAttempts.set(clientIP, record);
-      
-      const attemptsUntilLockout = ATTEMPTS_PER_WINDOW - (record.totalAttempts % ATTEMPTS_PER_WINDOW);
-      
+      record.lockoutDuration *= 2;
+
       return NextResponse.json(
         {
-          error: "密码错误",
-          remainingAttempts: attemptsUntilLockout,
-          totalAttempts: record.totalAttempts,
-          message: "密码错误"
+          error: `连续错误 ${ATTEMPTS_PER_WINDOW} 次，账户已锁定 ${lockoutMinutes} 分钟`,
+          lockoutUntil: record.lockoutUntil,
+          isLocked: true,
+          totalAttempts: record.totalAttempts
         },
-        { status: 401 }
+        { status: 429 }
       );
     }
-  } catch (error) {
+
+    failedAttempts.set(clientIP, record);
+
+    const attemptsUntilLockout = ATTEMPTS_PER_WINDOW - (record.totalAttempts % ATTEMPTS_PER_WINDOW);
+
+    return NextResponse.json(
+      {
+        error: "凭据错误",
+        remainingAttempts: attemptsUntilLockout,
+        totalAttempts: record.totalAttempts,
+        message: "凭据错误"
+      },
+      { status: 401 }
+    );
+  } catch {
     return NextResponse.json({ error: "Invalid credentials format" }, { status: 400 });
   }
 }

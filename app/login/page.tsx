@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, FormEvent, useEffect, Suspense } from "react";
+import { useState, FormEvent, useEffect, Suspense, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { LockKeyhole, Clock, Shield } from "lucide-react";
 
 function LoginPageContent() {
-  const [password, setPassword] = useState("");
+  const [credential, setCredential] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [lockoutUntil, setLockoutUntil] = useState(0);
@@ -15,6 +15,7 @@ function LoginPageContent() {
   const [now, setNow] = useState(() => Date.now());
   const router = useRouter();
   const searchParams = useSearchParams();
+  const credentialInputRef = useRef<HTMLInputElement>(null);
   const from = searchParams.get("from") || "/";
 
   const isLocked = lockoutUntil > now;
@@ -38,15 +39,20 @@ function LoginPageContent() {
     return () => clearInterval(timer);
   }, [lockoutUntil, isLocked]);
 
+  useEffect(() => {
+    credentialInputRef.current?.focus();
+  }, []);
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (isLocked) return;
     
     setLoading(true);
+    setError("");
 
     try {
-      const credentials = btoa(`:${password}`);
-      const response = await fetch("/api/auth/verify", {
+      const credentials = btoa(`:${credential}`);
+      const response = await fetch(`/api/auth/verify?from=${encodeURIComponent(from)}`, {
         method: "POST",
         headers: {
           "Authorization": `Basic ${credentials}`,
@@ -57,10 +63,12 @@ function LoginPageContent() {
       const data = await response.json();
 
       if (response.ok) {
-        router.push(from);
+        const redirectTo = typeof data?.redirectTo === "string" ? data.redirectTo : from;
+        router.push(redirectTo);
         router.refresh();
       } else {
-        setError(data.message || data.error || "密码错误");
+        setCredential("");
+        setError(data.message || data.error || "凭据错误");
         
         if (data.isLocked && data.lockoutUntil) {
           setLockoutUntil(data.lockoutUntil);
@@ -72,6 +80,7 @@ function LoginPageContent() {
         }
       }
     } catch (err) {
+      setCredential("");
       setError("登录失败，请重试");
       setLoading(false);
     }
@@ -103,27 +112,27 @@ function LoginPageContent() {
               <LockKeyhole className="w-8 h-8 text-white" />
             </div>
             <h1 className="text-2xl font-bold text-slate-100">CLIProxyAPI Dashboard</h1>
-            <p className="text-slate-400 mt-2">请输入密码以继续</p>
+            <p className="text-slate-400 mt-2">请输入管理密码或服务密钥以继续</p>
           </div>
 
           {/* 登录表单 */}
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-slate-300 mb-2">
-                密码
+                凭据
               </label>
               <input
                 id="password"
                 type="password"
-                value={password}
+                value={credential}
                 onChange={(e) => {
-                  setPassword(e.target.value);
+                  setCredential(e.target.value);
                   if (error) setError("");
                 }}
-                placeholder="输入访问密码"
+                placeholder="输入管理密码或服务密钥"
                 className="w-full px-4 py-3 bg-slate-800/50 border border-slate-600 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={loading || isLocked}
-                autoFocus
+                ref={credentialInputRef}
               />
             </div>
 
@@ -157,7 +166,7 @@ function LoginPageContent() {
 
             <button
               type="submit"
-              disabled={loading || !password || isLocked}
+              disabled={loading || !credential || isLocked}
               className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-medium rounded-lg hover:from-blue-700 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg"
             >
               {isLocked ? "账户已锁定" : loading ? "登录中..." : "登录"}

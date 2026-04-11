@@ -39,7 +39,27 @@ type HourAggRow = {
   reasoningTokens: number;
   cachedTokens: number;
 };
-type OverviewMeta = { page: number; pageSize: number; totalModels: number; totalPages: number };
+export type OverviewMeta = { page: number; pageSize: number; totalModels: number; totalPages: number };
+export type OverviewFilters = { models: string[]; routes: string[]; sources: string[]; names: string[] };
+export type OverviewQueryOptions = {
+  model?: string | null;
+  route?: string | null;
+  source?: string | null;
+  name?: string | null;
+  page?: number | null;
+  pageSize?: number | null;
+  start?: string | Date | null;
+  end?: string | Date | null;
+  timezone?: string | null;
+};
+export type OverviewResult = {
+  overview: UsageOverview;
+  empty: boolean;
+  days: number;
+  meta: OverviewMeta;
+  filters: OverviewFilters;
+  timezone: string;
+};
 
 function toNumber(value: unknown): number {
   const num = Number(value ?? 0);
@@ -86,8 +106,8 @@ function normalizePageSize(value?: number | null) {
 
 export async function getOverview(
   daysInput?: number,
-  opts?: { model?: string | null; route?: string | null; source?: string | null; name?: string | null; page?: number | null; pageSize?: number | null; start?: string | Date | null; end?: string | Date | null; timezone?: string | null }
-): Promise<{ overview: UsageOverview; empty: boolean; days: number; meta: OverviewMeta; filters: { models: string[]; routes: string[]; sources: string[]; names: string[] }; timezone: string }> {
+  opts?: OverviewQueryOptions
+): Promise<OverviewResult> {
   const startDate = parseDateInput(opts?.start);
   const endDate = parseDateInput(opts?.end);
   const hasCustomRange = startDate && endDate && endDate >= startDate;

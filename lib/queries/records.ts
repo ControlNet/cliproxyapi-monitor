@@ -39,6 +39,25 @@ export type SortField =
   | "isError";
 export type SortOrder = "asc" | "desc";
 export type SortKey = { field: SortField; order: SortOrder };
+export type UsageRecordsFilters = { models: string[]; routes: string[]; sources: string[] };
+export type UsageRecordsQueryInput = {
+  limit?: number;
+  sortKeys?: SortKey[];
+  sortField?: SortField;
+  sortOrder?: SortOrder;
+  cursor?: string | null;
+  model?: string | null;
+  route?: string | null;
+  source?: string | null;
+  start?: string | null;
+  end?: string | null;
+  includeFilters?: boolean;
+};
+export type UsageRecordsResult = {
+  items: UsageRecordRow[];
+  nextCursor: string | null;
+  filters?: UsageRecordsFilters;
+};
 
 // 注意：必须使用 sql.raw() 来引用外部表字段，否则 Drizzle 会丢失表名前缀
 // 反斜杠需要双重转义：JS 字符串转义 + PostgreSQL E'' 字符串转义
@@ -212,19 +231,7 @@ function buildCursorWhere(
   return or(...clauses)!;
 }
 
-export async function getUsageRecords(input: {
-  limit?: number;
-  sortKeys?: SortKey[];
-  sortField?: SortField;
-  sortOrder?: SortOrder;
-  cursor?: string | null;
-  model?: string | null;
-  route?: string | null;
-  source?: string | null;
-  start?: string | null;
-  end?: string | null;
-  includeFilters?: boolean;
-}) {
+export async function getUsageRecords(input: UsageRecordsQueryInput): Promise<UsageRecordsResult> {
   const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
   const rawSortKeys: SortKey[] =
     input.sortKeys && input.sortKeys.length > 0
@@ -316,7 +323,7 @@ export async function getUsageRecords(input: {
     return Buffer.from(JSON.stringify(cursorPayload)).toString("base64");
   })();
 
-  let filters: { models: string[]; routes: string[]; sources: string[] } | undefined;
+  let filters: UsageRecordsFilters | undefined;
   if (input.includeFilters) {
     const [modelRows, routeRows, sourceRows] = await Promise.all([
       db

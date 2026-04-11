@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { config as appConfig } from "@/lib/config";
+import {
+  clearUserSessionCookie,
+  getUserSessionFromCookieValue,
+  setUserSessionCookie,
+  USER_SESSION_COOKIE_NAME
+} from "@/lib/user-session";
 
 const password = appConfig.password;
-const realm = "CLIProxy Dashboard";
-const COOKIE_NAME = "dashboard_auth";
+const ADMIN_COOKIE_NAME = "dashboard_auth";
 const COOKIE_MAX_AGE = 30 * 24 * 60 * 60; // 30 days
 const cookieSecure = /^(1|true|yes|on)$/i.test(process.env.AUTH_COOKIE_SECURE ?? "");
 const expectedTokenPromise = password ? hashPassword(password) : null;
@@ -25,15 +30,6 @@ function isBypassedPath(pathname: string) {
   if (pathname === "/favicon.ico") return true;
   if (pathname === "/cf-worker-sync.js") return true;
   return false;
-}
-
-function unauthorized() {
-  return new NextResponse("Unauthorized", {
-    status: 401,
-    headers: {
-      "WWW-Authenticate": `Basic realm="${realm}", charset="UTF-8"`
-    }
-  });
 }
 
 async function hashPassword(value: string) {
@@ -59,14 +55,14 @@ async function validateHeader(request: NextRequest, expectedToken: string | null
 
 async function validateCookie(request: NextRequest, expectedToken: string | null) {
   if (!password) return { ok: true, token: null };
-  const token = request.cookies.get(COOKIE_NAME)?.value;
+  const token = request.cookies.get(ADMIN_COOKIE_NAME)?.value;
   if (!token) return { ok: false, token: null };
   return { ok: token === expectedToken, token };
 }
 
-function withSessionCookie(response: NextResponse, token: string) {
+function withAdminSessionCookie(response: NextResponse, token: string) {
   response.cookies.set({
-    name: COOKIE_NAME,
+    name: ADMIN_COOKIE_NAME,
     value: token,
     httpOnly: true,
     sameSite: "lax",
@@ -77,6 +73,31 @@ function withSessionCookie(response: NextResponse, token: string) {
   return response;
 }
 
+function clearAdminSessionCookie(response: NextResponse) {
+  response.cookies.set({
+    name: ADMIN_COOKIE_NAME,
+    value: "",
+    httpOnly: true,
+    sameSite: "lax",
+    secure: cookieSecure,
+    maxAge: 0,
+    path: "/"
+  });
+
+  return response;
+}
+
+function isUserPath(pathname: string) {
+  return pathname === "/user" || pathname.startsWith("/user/") || pathname === "/api/user" || pathname.startsWith("/api/user/");
+}
+
+function redirectToLogin(request: NextRequest) {
+  const loginUrl = new URL("/login", request.url);
+  const from = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+  loginUrl.searchParams.set("from", from || "/");
+  return NextResponse.redirect(loginUrl);
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   if (isBypassedPath(pathname)) return NextResponse.next();
@@ -85,27 +106,45 @@ export async function proxy(request: NextRequest) {
   if (pathname === "/login" || pathname.startsWith("/api/auth")) {
     return NextResponse.next();
   }
-  
+
+  const rawUserSession = request.cookies.get(USER_SESSION_COOKIE_NAME)?.value;
+  const userSession = await getUserSessionFromCookieValue(rawUserSession);
+
+  if (isUserPath(pathname)) {
+    if (userSession) {
+      const response = NextResponse.next();
+      await setUserSessionCookie(response, userSession);
+      return response;
+    }
+
+    const response = redirectToLogin(request);
+    if (rawUserSession && !userSession) {
+      clearUserSessionCookie(response);
+    }
+    return response;
+  }
+
   if (!password) return NextResponse.next();
 
   const expectedToken = expectedTokenPromise ? await expectedTokenPromise : null;
 
   const cookieResult = await validateCookie(request, expectedToken);
   if (cookieResult.ok && cookieResult.token) {
-    const res = NextResponse.next();
-    return withSessionCookie(res, cookieResult.token); // refresh sliding window
+    const response = NextResponse.next();
+    return withAdminSessionCookie(response, cookieResult.token);
   }
 
   const headerResult = await validateHeader(request, expectedToken);
   if (headerResult.ok && headerResult.token) {
-    const res = NextResponse.next();
-    return withSessionCookie(res, headerResult.token);
+    const response = NextResponse.next();
+    return withAdminSessionCookie(response, headerResult.token);
   }
 
-  // 重定向到登录页面而不是返回 401
-  const loginUrl = new URL("/login", request.url);
-  loginUrl.searchParams.set("from", pathname);
-  return NextResponse.redirect(loginUrl);
+  const response = redirectToLogin(request);
+  if (request.cookies.get(ADMIN_COOKIE_NAME)?.value) {
+    clearAdminSessionCookie(response);
+  }
+  return response;
 }
 
 export const config = {

@@ -12,6 +12,24 @@ export type ExplorePoint = {
   cachedTokens: number;
   model: string;
 };
+export type ExploreFilters = { routes: string[]; names: string[] };
+export type ExploreQueryOptions = {
+  maxPoints?: number | null;
+  start?: string | Date | null;
+  end?: string | Date | null;
+  route?: string | null;
+  name?: string | null;
+  filterInvalid?: boolean;
+};
+export type ExploreResult = {
+  days: number;
+  total: number;
+  zeroTokensCount: number;
+  returned: number;
+  step: number;
+  points: ExplorePoint[];
+  filters: ExploreFilters;
+};
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -47,15 +65,8 @@ function normalizeMaxPoints(value?: number | null) {
 
 export async function getExplorePoints(
   daysInput?: number,
-  opts?: {
-    maxPoints?: number | null;
-    start?: string | Date | null;
-    end?: string | Date | null;
-    route?: string | null;
-    name?: string | null;
-    filterInvalid?: boolean;
-  }
-) {
+  opts?: ExploreQueryOptions
+): Promise<ExploreResult> {
   const startDate = parseDateInput(opts?.start);
   const endDate = parseDateInput(opts?.end);
   const hasCustomRange = startDate && endDate && endDate >= startDate;

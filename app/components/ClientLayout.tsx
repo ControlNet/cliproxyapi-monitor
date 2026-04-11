@@ -7,6 +7,7 @@ import Sidebar from "./Sidebar";
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isLoginPage = pathname === "/login";
+  const isUserPage = pathname === "/user" || pathname.startsWith("/user/");
 
   useEffect(() => {
     const applyInitialTheme = () => {
@@ -19,7 +20,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     applyInitialTheme();
   }, []);
 
-  if (isLoginPage) {
+  if (isLoginPage || isUserPage) {
     return <>{children}</>;
   }
 

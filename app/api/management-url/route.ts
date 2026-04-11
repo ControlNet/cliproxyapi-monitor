@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAdminRequest } from "@/lib/admin-auth";
 
 export const runtime = "nodejs";
 
@@ -11,7 +12,12 @@ function buildManagementUrl() {
   return `${root}/management.html`;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const unauthorizedResponse = await requireAdminRequest(request);
+  if (unauthorizedResponse) {
+    return unauthorizedResponse;
+  }
+
   const url = buildManagementUrl();
   if (!url) {
     return NextResponse.json({ error: "CLIPROXY_API_BASE_URL is missing" }, { status: 501 });
