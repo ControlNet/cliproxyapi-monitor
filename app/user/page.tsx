@@ -69,7 +69,6 @@ type UserQuotaAccountWindow = {
 
 type UserQuotaAccount = {
   id: string;
-  label: string;
   planLabel: string | null;
   windows: UserQuotaAccountWindow[];
 };
@@ -253,11 +252,24 @@ function QuotaMetricCard({ item }: { item: UserQuotaItem }) {
 }
 
 function QuotaAccountWindowCard({ window }: { window: UserQuotaAccountWindow }) {
+  const ratioPercent = window.remainingRatio === null ? null : Math.round(window.remainingRatio * 100);
+  const barWidth = ratioPercent === null ? 0 : Math.max(6, Math.min(100, ratioPercent));
+  const barColor = ratioPercent === null
+    ? "bg-slate-700"
+    : ratioPercent <= 10
+      ? "bg-red-400"
+      : ratioPercent <= 30
+        ? "bg-amber-400"
+        : "bg-emerald-400";
+
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{window.label}</span>
+        <span className="text-xs font-semibold tracking-[0.18em] text-slate-500">{window.label}</span>
         <span className="text-sm font-semibold text-white">{window.remainingLabel ?? "--"}</span>
+      </div>
+      <div className="mt-3 h-2 rounded-full bg-slate-800">
+        {ratioPercent !== null ? <div className={`h-full rounded-full ${barColor}`} style={{ width: `${barWidth}%` }} /> : null}
       </div>
       <p className="mt-2 text-xs text-slate-400">{window.resetLabel ?? "--"}</p>
     </div>
@@ -267,8 +279,7 @@ function QuotaAccountWindowCard({ window }: { window: UserQuotaAccountWindow }) 
 function QuotaAccountCard({ account }: { account: UserQuotaAccount }) {
   return (
     <article className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-sm font-medium text-white">{account.label}</h3>
+      <div className="flex justify-end">
         <span className="rounded-full border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-200">
           {account.planLabel ?? "--"}
         </span>
@@ -281,9 +292,9 @@ function QuotaAccountCard({ account }: { account: UserQuotaAccount }) {
   );
 }
 
-function QuotaPanel({ quota, refreshing, onRefresh }: { quota: UserQuotaResponse; refreshing: boolean; onRefresh: () => void }) {
-  const toneStyles = getQuotaToneStyles(quota.status.tone);
-  const hasCodexAccounts = quota.accounts.length > 0;
+function QuotaPanel({ quota, refreshing, onRefresh }: { quota: UserQuotaResponse | null; refreshing: boolean; onRefresh: () => void }) {
+  const toneStyles = quota ? getQuotaToneStyles(quota.status.tone) : null;
+  const hasCodexAccounts = (quota?.accounts.length ?? 0) > 0;
 
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 shadow-lg shadow-slate-950/20">
@@ -309,26 +320,30 @@ function QuotaPanel({ quota, refreshing, onRefresh }: { quota: UserQuotaResponse
         </button>
       </div>
 
-      {!hasCodexAccounts && (quota.creditSummary ||
+      {quota && !hasCodexAccounts && (quota.creditSummary ||
       (quota.status.description && quota.status.description.trim()) ||
       quota.status.tone === "error" ||
       quota.status.tone === "warning") ? (
-        <div className={`mt-5 rounded-2xl border px-4 py-3 ${toneStyles.banner}`}>
+        <div className={`mt-5 rounded-2xl border px-4 py-3 ${toneStyles?.banner ?? ""}`}>
           <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <span className="text-sm font-semibold">{quota.status.title}</span>
-            {quota.creditSummary ? <span className={`text-xs ${toneStyles.meta}`}>{quota.creditSummary}</span> : null}
+            {quota.creditSummary ? <span className={`text-xs ${toneStyles?.meta ?? ""}`}>{quota.creditSummary}</span> : null}
           </div>
-          {quota.status.description ? <p className={`mt-2 text-sm ${toneStyles.meta}`}>{quota.status.description}</p> : null}
+          {quota.status.description ? <p className={`mt-2 text-sm ${toneStyles?.meta ?? ""}`}>{quota.status.description}</p> : null}
         </div>
       ) : null}
 
-      {hasCodexAccounts ? (
+      {quota && hasCodexAccounts ? (
         <div className="mt-5 space-y-3">
           {quota.accounts.map((account) => <QuotaAccountCard key={account.id} account={account} />)}
         </div>
+      ) : !quota ? (
+        <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-sm text-slate-400">
+          点击刷新加载剩余额度。
+        </div>
       ) : null}
 
-      {!hasCodexAccounts && quota.available && quota.items.length > 0 ? (
+      {quota && !hasCodexAccounts && quota.available && quota.items.length > 0 ? (
         <div className="mt-5 grid gap-3 md:grid-cols-2">
           {quota.items.map((item) => <QuotaMetricCard key={item.id} item={item} />)}
         </div>
@@ -363,7 +378,6 @@ export default function UserDashboardPage() {
   const [quota, setQuota] = useState<UserQuotaResponse | null>(null);
   const [quotaVisibility, setQuotaVisibility] = useState<"idle" | "hidden" | "ready">("idle");
   const [quotaLoading, setQuotaLoading] = useState(false);
-  const [quotaReloadToken, setQuotaReloadToken] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -533,64 +547,50 @@ export default function UserDashboardPage() {
     };
   }, [customEnd, customStart, rangeDays, rangeMode, ready, viewMode]);
 
-  useEffect(() => {
-    if (!ready) return;
+  async function handleQuotaRefresh() {
+    if (!ready || quotaLoading) return;
 
     const controller = new AbortController();
-    let active = true;
+    setQuotaLoading(true);
 
-    const loadQuota = async (_requestToken: number) => {
-      setQuotaLoading(true);
-      try {
-        const response = await fetch("/api/user/quota", {
-          cache: "no-store",
-          signal: controller.signal
-        });
+    try {
+      const response = await fetch("/api/user/quota", {
+        cache: "no-store",
+        signal: controller.signal
+      });
 
-        if (!active) return;
-
-        if (response.status === 404) {
-          setQuota(null);
-          setQuotaVisibility("hidden");
-          return;
-        }
-
-        let payload: UserQuotaResponse | null = null;
-        try {
-          payload = (await response.json()) as UserQuotaResponse;
-        } catch {
-          payload = null;
-        }
-
-        if (!response.ok || !payload) {
-          const message = payload?.status?.description || (response.status === 401 ? "登录状态已失效，请重新登录。" : USER_QUOTA_UNAVAILABLE_MESSAGE);
-          setQuota(buildQuotaFallback(`无法加载配额摘要：${message}`));
-          setQuotaVisibility("ready");
-          return;
-        }
-
-        setQuota(payload);
-        setQuotaVisibility("ready");
-      } catch (requestError) {
-        if (!active) return;
-        const message = getErrorMessage(requestError);
-        if (message === "This operation was aborted") return;
-        setQuota(buildQuotaFallback(`无法加载配额摘要：${USER_QUOTA_UNAVAILABLE_MESSAGE}`));
-        setQuotaVisibility("ready");
-      } finally {
-        if (active) {
-          setQuotaLoading(false);
-        }
+      if (response.status === 404) {
+        setQuota(null);
+        setQuotaVisibility("hidden");
+        return;
       }
-    };
 
-    void loadQuota(quotaReloadToken);
+      let payload: UserQuotaResponse | null = null;
+      try {
+        payload = (await response.json()) as UserQuotaResponse;
+      } catch {
+        payload = null;
+      }
 
-    return () => {
-      active = false;
+      if (!response.ok || !payload) {
+        const message = payload?.status?.description || (response.status === 401 ? "登录状态已失效，请重新登录。" : USER_QUOTA_UNAVAILABLE_MESSAGE);
+        setQuota(buildQuotaFallback(`无法加载配额摘要：${message}`));
+        setQuotaVisibility("ready");
+        return;
+      }
+
+      setQuota(payload);
+      setQuotaVisibility("ready");
+    } catch (requestError) {
+      const message = getErrorMessage(requestError);
+      if (message === "This operation was aborted") return;
+      setQuota(buildQuotaFallback(`无法加载配额摘要：${USER_QUOTA_UNAVAILABLE_MESSAGE}`));
+      setQuotaVisibility("ready");
+    } finally {
+      setQuotaLoading(false);
       controller.abort();
-    };
-  }, [quotaReloadToken, ready]);
+    }
+  }
 
   const rangeSubtitle = useMemo(() => {
     if (rangeMode === "custom" && customStart && customEnd) {
@@ -977,11 +977,11 @@ export default function UserDashboardPage() {
           </div>
         </section>
 
-        {quotaVisibility === "ready" && quota ? (
+        {quotaVisibility !== "hidden" ? (
           <QuotaPanel
             quota={quota}
             refreshing={quotaLoading}
-            onRefresh={() => setQuotaReloadToken((value) => value + 1)}
+            onRefresh={handleQuotaRefresh}
           />
         ) : null}
       </div>

@@ -43,6 +43,20 @@ export type UserQuotaItem = {
   resetLabel: string | null;
 };
 
+export type UserQuotaAccountWindow = {
+  id: string;
+  label: string;
+  remainingRatio: number | null;
+  remainingLabel: string | null;
+  resetLabel: string | null;
+};
+
+export type UserQuotaAccount = {
+  id: string;
+  planLabel: string | null;
+  windows: UserQuotaAccountWindow[];
+};
+
 export type UserQuotaResponse = {
   enabled: true;
   available: boolean;
@@ -56,6 +70,7 @@ export type UserQuotaResponse = {
     title: string;
     description: string | null;
   };
+  accounts: UserQuotaAccount[];
   refreshedAt: string;
 };
 
@@ -338,6 +353,7 @@ export function createUnavailableUserQuotaResponse(input: {
     planLabel: null,
     creditSummary: null,
     items: [],
+    accounts: [],
     status: {
       tone: input.tone ?? "neutral",
       title: input.title,
@@ -402,7 +418,11 @@ async function resolveUserAuthContext(route: string): Promise<UserAuthContext | 
   };
 }
 
-async function fetchRawAuthFile(authIndex: string): Promise<RawAuthFileItem | null> {
+function getRawAuthFileAuthIndex(rawAuthFile: RawAuthFileItem) {
+  return normalizeAuthIndex(rawAuthFile.auth_index ?? rawAuthFile.authIndex ?? rawAuthFile.index ?? rawAuthFile.id);
+}
+
+async function fetchRawAuthFiles(): Promise<RawAuthFileItem[]> {
   const response = await fetch(`${config.cliproxy.baseUrl.replace(/\/$/, "")}/auth-files`, {
     headers: managementHeaders(),
     cache: "no-store"
@@ -415,18 +435,7 @@ async function fetchRawAuthFile(authIndex: string): Promise<RawAuthFileItem | nu
   const json = await response.json();
   const items = pickArray(json);
 
-  for (const item of items) {
-    if (!item || typeof item !== "object") continue;
-    const candidate = item as RawAuthFileItem;
-    const candidateAuthIndex = normalizeAuthIndex(
-      candidate.auth_index ?? candidate.authIndex ?? candidate.index ?? candidate.id
-    );
-    if (candidateAuthIndex === authIndex) {
-      return candidate;
-    }
-  }
-
-  return null;
+  return items.filter((item): item is RawAuthFileItem => Boolean(item && typeof item === "object"));
 }
 
 async function callUpstreamQuota(input: {
@@ -588,6 +597,7 @@ function buildClaudeQuotaResponse(usagePayload: Record<string, unknown>, profile
     planLabel,
     creditSummary,
     items,
+    accounts: [],
     status: summarizeStatus(items)
   });
 }
@@ -625,6 +635,69 @@ function pickCodexWindows(limitInfo: CodexRateLimitInfo | null | undefined) {
     weeklyWindow,
     limitReached: normalizeBoolean(limitInfo.limit_reached ?? limitInfo.limitReached) ?? false,
     allowed: normalizeBoolean(limitInfo.allowed) ?? true
+  };
+}
+
+function normalizeCodexPlanLabel(planType: string | null) {
+  if (!planType) return null;
+  if (planType === "team") return "team";
+  if (planType === "plus") return "plus";
+  if (planType === "free") return "free";
+  if (planType === "pro") return "pro";
+  return planType;
+}
+
+function createCodexAccountWindow(id: string, label: string, window: CodexUsageWindow | null, limitReached: boolean, allowed: boolean): UserQuotaAccountWindow {
+  const usedPercent = normalizeNumber(window?.used_percent ?? window?.usedPercent);
+  const usedRatio = usedPercent === null ? (limitReached || !allowed ? 1 : null) : clampRatio(usedPercent / 100);
+  const remainingRatio = usedRatio === null ? null : clampRatio(1 - usedRatio);
+
+  return {
+    id,
+    label,
+    remainingRatio,
+    remainingLabel: formatPercentLabel(remainingRatio),
+    resetLabel: formatResetLabel(
+      window?.reset_after_seconds ?? window?.resetAfterSeconds ?? window?.reset_at ?? window?.resetAt ?? null
+    )
+  };
+}
+
+function createUnavailableCodexAccount(index: number, rawAuthFile: RawAuthFileItem): UserQuotaAccount {
+  return {
+    id: `codex-account-${index + 1}`,
+    planLabel: normalizeCodexPlanLabel(resolveCodexPlanType(rawAuthFile)),
+    windows: [
+      {
+        id: "five-hour",
+        label: "5h",
+        remainingRatio: null,
+        remainingLabel: null,
+        resetLabel: null
+      },
+      {
+        id: "weekly",
+        label: "7d",
+        remainingRatio: null,
+        remainingLabel: null,
+        resetLabel: null
+      }
+    ]
+  };
+}
+
+function buildCodexAccountQuota(rawAuthFile: RawAuthFileItem, index: number, payload: Record<string, unknown>): UserQuotaAccount {
+  const primary = pickCodexWindows((payload.rate_limit ?? payload.rateLimit ?? null) as CodexRateLimitInfo | null);
+
+  return {
+    id: `codex-account-${index + 1}`,
+    planLabel: normalizeCodexPlanLabel(
+      normalizeString(payload.plan_type ?? payload.planType)?.toLowerCase() ?? resolveCodexPlanType(rawAuthFile)
+    ),
+    windows: [
+      createCodexAccountWindow("five-hour", "5h", primary.fiveHourWindow, primary.limitReached, primary.allowed),
+      createCodexAccountWindow("weekly", "7d", primary.weeklyWindow, primary.limitReached, primary.allowed)
+    ]
   };
 }
 
@@ -679,7 +752,72 @@ function buildCodexQuotaResponse(payload: Record<string, unknown>, fallbackPlanT
     planLabel: planLabel ?? null,
     creditSummary: null,
     items,
+    accounts: [],
     status: summarizeStatus(items)
+  });
+}
+
+async function getAllCodexQuota(rawAuthFiles: RawAuthFileItem[]) {
+  const orderedCodexFiles = rawAuthFiles.filter((rawAuthFile) => toProviderKey(rawAuthFile, null) === "codex");
+
+  if (!orderedCodexFiles.length) {
+    return createUnavailableUserQuotaResponse({
+      providerLabel: "Codex",
+      title: "Codex 额度暂不可用",
+      description: "上游当前没有可用的 Codex 账号列表。"
+    });
+  }
+
+  const accounts = await Promise.all(
+    orderedCodexFiles.map(async (rawAuthFile, index) => {
+      const authIndex = getRawAuthFileAuthIndex(rawAuthFile);
+      if (!authIndex || normalizeBoolean(rawAuthFile.disabled) === true) {
+        return createUnavailableCodexAccount(index, rawAuthFile);
+      }
+
+      const accountId = resolveCodexChatgptAccountId(rawAuthFile);
+      if (!accountId) {
+        return createUnavailableCodexAccount(index, rawAuthFile);
+      }
+
+      const result = await callUpstreamQuota({
+        authIndex,
+        method: "GET",
+        url: CODEX_USAGE_URL,
+        header: {
+          Authorization: "Bearer $TOKEN$",
+          "Content-Type": "application/json",
+          "User-Agent": "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal",
+          "Chatgpt-Account-Id": accountId
+        }
+      }).catch(() => null);
+
+      if (!result || result.statusCode < 200 || result.statusCode >= 300) {
+        return createUnavailableCodexAccount(index, rawAuthFile);
+      }
+
+      const payload = parseJsonValue<Record<string, unknown>>(result.body ?? result.bodyText);
+      if (!payload) {
+        return createUnavailableCodexAccount(index, rawAuthFile);
+      }
+
+      return buildCodexAccountQuota(rawAuthFile, index, payload);
+    })
+  );
+
+  return createQuotaResponse({
+    available: accounts.length > 0,
+    providerLabel: "Codex",
+    groupLabel: null,
+    planLabel: null,
+    creditSummary: null,
+    items: [],
+    accounts,
+    status: {
+      tone: "neutral",
+      title: "已获取 Codex 额度摘要",
+      description: null
+    }
   });
 }
 
@@ -752,6 +890,7 @@ function buildGeminiCliQuotaResponse(
     planLabel,
     creditSummary: foundCredits ? `Google One AI Credits：${formatCountLabel(g1Credits)}` : null,
     items,
+    accounts: [],
     status: summarizeStatus(items)
   });
 }
@@ -800,6 +939,7 @@ function buildKimiQuotaResponse(payload: Record<string, unknown>) {
     planLabel: null,
     creditSummary: null,
     items,
+    accounts: [],
     status: summarizeStatus(items)
   });
 }
@@ -1025,7 +1165,15 @@ export async function getUserQuota(session: UserSession): Promise<UserQuotaRespo
     });
   }
 
-  const rawAuthFile = await fetchRawAuthFile(authContext.authIndex).catch(() => null);
+  const rawAuthFiles = await fetchRawAuthFiles().catch(() => null);
+  if (!rawAuthFiles) {
+    return createUnavailableUserQuotaResponse({
+      title: "暂时无法定位当前用户配额",
+      description: "当前无法读取上游 auth-files，因此暂时无法拉取额度摘要。"
+    });
+  }
+
+  const rawAuthFile = rawAuthFiles.find((candidate) => getRawAuthFileAuthIndex(candidate) === authContext.authIndex) ?? null;
   if (!rawAuthFile) {
     return createUnavailableUserQuotaResponse({
       title: "暂时无法定位当前用户配额",
@@ -1033,15 +1181,19 @@ export async function getUserQuota(session: UserSession): Promise<UserQuotaRespo
     });
   }
 
+  const provider = toProviderKey(rawAuthFile, authContext.provider);
+
+  if (provider === "codex") {
+    return getAllCodexQuota(rawAuthFiles);
+  }
+
   if (normalizeBoolean(rawAuthFile.disabled) === true) {
     return createUnavailableUserQuotaResponse({
-      providerLabel: toProviderLabel(toProviderKey(rawAuthFile, authContext.provider)),
+      providerLabel: toProviderLabel(provider),
       title: "当前凭据未启用配额摘要",
       description: "上游凭据当前处于禁用状态，因此不会继续拉取配额摘要。"
     });
   }
-
-  const provider = toProviderKey(rawAuthFile, authContext.provider);
 
   if (provider === "claude") {
     return getClaudeQuota(authContext.authIndex);
