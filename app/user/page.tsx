@@ -3,14 +3,13 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ResponsiveContainer, ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Bar, Line } from "recharts";
-import { ArrowRight, CalendarRange, Gauge, Globe2, LineChart as LineChartIcon, LoaderCircle, UserRound } from "lucide-react";
+import { ArrowRight, CalendarRange, Gauge, Globe2, LineChart as LineChartIcon, LoaderCircle, RefreshCw, UserRound } from "lucide-react";
 import type { UsageSeriesPoint } from "@/lib/types";
 import { formatCompactNumber, formatCurrency, formatHourLabel, formatNumberWithCommas } from "@/lib/utils";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const USER_RANGE_SELECTION_KEY = "userRangeSelection";
 const PRESET_DAYS = [7, 14, 30] as const;
-const USER_OVERVIEW_UNAVAILABLE_MESSAGE = "当前概览暂不可用，请稍后重试。";
 const USER_QUOTA_UNAVAILABLE_MESSAGE = "当前配额摘要暂不可用，请稍后重试。";
 
 type RangeMode = "preset" | "custom";
@@ -60,6 +59,21 @@ type UserQuotaItem = {
   resetLabel: string | null;
 };
 
+type UserQuotaAccountWindow = {
+  id: string;
+  label: string;
+  remainingRatio: number | null;
+  remainingLabel: string | null;
+  resetLabel: string | null;
+};
+
+type UserQuotaAccount = {
+  id: string;
+  label: string;
+  planLabel: string | null;
+  windows: UserQuotaAccountWindow[];
+};
+
 type UserQuotaResponse = {
   enabled: true;
   available: boolean;
@@ -73,6 +87,7 @@ type UserQuotaResponse = {
     title: string;
     description: string | null;
   };
+  accounts: UserQuotaAccount[];
   refreshedAt: string;
 };
 
@@ -118,6 +133,7 @@ function buildQuotaFallback(message: string): UserQuotaResponse {
     planLabel: null,
     creditSummary: null,
     items: [],
+    accounts: [],
     status: {
       tone: "error",
       title: "配额摘要暂不可用",
@@ -236,8 +252,38 @@ function QuotaMetricCard({ item }: { item: UserQuotaItem }) {
   );
 }
 
-function QuotaPanel({ quota }: { quota: UserQuotaResponse }) {
+function QuotaAccountWindowCard({ window }: { window: UserQuotaAccountWindow }) {
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{window.label}</span>
+        <span className="text-sm font-semibold text-white">{window.remainingLabel ?? "--"}</span>
+      </div>
+      <p className="mt-2 text-xs text-slate-400">{window.resetLabel ?? "--"}</p>
+    </div>
+  );
+}
+
+function QuotaAccountCard({ account }: { account: UserQuotaAccount }) {
+  return (
+    <article className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-medium text-white">{account.label}</h3>
+        <span className="rounded-full border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-200">
+          {account.planLabel ?? "--"}
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        {account.windows.map((window) => <QuotaAccountWindowCard key={`${account.id}-${window.id}`} window={window} />)}
+      </div>
+    </article>
+  );
+}
+
+function QuotaPanel({ quota, refreshing, onRefresh }: { quota: UserQuotaResponse; refreshing: boolean; onRefresh: () => void }) {
   const toneStyles = getQuotaToneStyles(quota.status.tone);
+  const hasCodexAccounts = quota.accounts.length > 0;
 
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 shadow-lg shadow-slate-950/20">
@@ -252,17 +298,21 @@ function QuotaPanel({ quota }: { quota: UserQuotaResponse }) {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-200 lg:justify-end">
-          {quota.providerLabel ? <span className="rounded-full border border-slate-700 bg-slate-800 px-3 py-1.5">{quota.providerLabel}</span> : null}
-          {quota.groupLabel ? <span className="rounded-full border border-slate-700 bg-slate-800 px-3 py-1.5">{quota.groupLabel}</span> : null}
-          {quota.planLabel ? <span className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3 py-1.5 text-indigo-100">{quota.planLabel}</span> : null}
-        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={refreshing}
+          className="inline-flex items-center gap-2 self-start rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-60 lg:self-auto"
+        >
+          <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+          {refreshing ? "刷新中..." : "刷新"}
+        </button>
       </div>
 
-      {quota.creditSummary ||
+      {!hasCodexAccounts && (quota.creditSummary ||
       (quota.status.description && quota.status.description.trim()) ||
       quota.status.tone === "error" ||
-      quota.status.tone === "warning" ? (
+      quota.status.tone === "warning") ? (
         <div className={`mt-5 rounded-2xl border px-4 py-3 ${toneStyles.banner}`}>
           <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <span className="text-sm font-semibold">{quota.status.title}</span>
@@ -272,7 +322,13 @@ function QuotaPanel({ quota }: { quota: UserQuotaResponse }) {
         </div>
       ) : null}
 
-      {quota.available && quota.items.length > 0 ? (
+      {hasCodexAccounts ? (
+        <div className="mt-5 space-y-3">
+          {quota.accounts.map((account) => <QuotaAccountCard key={account.id} account={account} />)}
+        </div>
+      ) : null}
+
+      {!hasCodexAccounts && quota.available && quota.items.length > 0 ? (
         <div className="mt-5 grid gap-3 md:grid-cols-2">
           {quota.items.map((item) => <QuotaMetricCard key={item.id} item={item} />)}
         </div>
@@ -306,6 +362,8 @@ export default function UserDashboardPage() {
   const [overview, setOverview] = useState<UserOverviewResponse | null>(null);
   const [quota, setQuota] = useState<UserQuotaResponse | null>(null);
   const [quotaVisibility, setQuotaVisibility] = useState<"idle" | "hidden" | "ready">("idle");
+  const [quotaLoading, setQuotaLoading] = useState(false);
+  const [quotaReloadToken, setQuotaReloadToken] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -481,7 +539,8 @@ export default function UserDashboardPage() {
     const controller = new AbortController();
     let active = true;
 
-    const loadQuota = async () => {
+    const loadQuota = async (_requestToken: number) => {
+      setQuotaLoading(true);
       try {
         const response = await fetch("/api/user/quota", {
           cache: "no-store",
@@ -518,16 +577,20 @@ export default function UserDashboardPage() {
         if (message === "This operation was aborted") return;
         setQuota(buildQuotaFallback(`无法加载配额摘要：${USER_QUOTA_UNAVAILABLE_MESSAGE}`));
         setQuotaVisibility("ready");
+      } finally {
+        if (active) {
+          setQuotaLoading(false);
+        }
       }
     };
 
-    void loadQuota();
+    void loadQuota(quotaReloadToken);
 
     return () => {
       active = false;
       controller.abort();
     };
-  }, [ready]);
+  }, [quotaReloadToken, ready]);
 
   const rangeSubtitle = useMemo(() => {
     if (rangeMode === "custom" && customStart && customEnd) {
@@ -746,12 +809,6 @@ export default function UserDashboardPage() {
             ) : null}
           </div>
 
-          {isGlobalMode && canViewGlobal ? (
-            <div className="mt-5 rounded-2xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-100">
-              当前展示的是全站聚合统计，仅影响本页摘要卡与趋势图。<span className="font-medium text-white">“我的记录”仍只会显示当前登录身份对应的明细</span>，不会扩大可见范围。
-            </div>
-          ) : null}
-
           {error ? (
             <div className="mt-5 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>
           ) : null}
@@ -920,7 +977,13 @@ export default function UserDashboardPage() {
           </div>
         </section>
 
-        {quotaVisibility === "ready" && quota ? <QuotaPanel quota={quota} /> : null}
+        {quotaVisibility === "ready" && quota ? (
+          <QuotaPanel
+            quota={quota}
+            refreshing={quotaLoading}
+            onRefresh={() => setQuotaReloadToken((value) => value + 1)}
+          />
+        ) : null}
       </div>
     </main>
   );
