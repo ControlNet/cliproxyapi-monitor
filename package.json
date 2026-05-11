@@ -9,6 +9,7 @@
     "build:app": "next build",
     "build": "pnpm run build:app",
     "start": "next start",
+    "test": "vitest run",
     "lint": "eslint .",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push"
@@ -35,6 +36,7 @@
     "eslint-config-next": "16.1.6",
     "postcss": "^8.4.38",
     "tailwindcss": "^4.1.18",
+    "vitest": "^3.2.4",
     "typescript": "^5.4.5"
   },
   "pnpm": {

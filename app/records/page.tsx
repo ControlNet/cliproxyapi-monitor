@@ -818,8 +818,8 @@ export default function RecordsPage() {
           );
         case "route":
           return (
-            <div className="max-w-[200px] truncate text-slate-300" title={row.route}>
-              {row.route}
+            <div className="max-w-[200px] truncate text-slate-300" title={row.route || "-"}>
+              {row.route || "-"}
             </div>
           );
         case "credentialName":

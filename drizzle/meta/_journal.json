@@ -36,6 +36,13 @@
       "when": 1771072800000,
       "tag": "0004_add_auth_file_mappings",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1778427882993,
+      "tag": "0005_cold_dreadnoughts",
+      "breakpoints": true
     }
   ]
 }

@@ -132,8 +132,12 @@ export async function getExplorePoints(
   const total = Number(totalRows?.[0]?.count ?? 0);
   const zeroTokensCount = Number(zeroTokensRows?.[0]?.count ?? 0);
   const filters = {
-    routes: availableRouteRows.map((row) => row.route).filter(Boolean),
-    names: availableNameRows.map((row) => row.name).filter((name): name is string => Boolean(name) && name !== "-")
+    routes: availableRouteRows
+      .map((row: { route: string | null }) => row.route)
+      .filter((route: string | null): route is string => Boolean(route)),
+    names: availableNameRows
+      .map((row: { name: string | null }) => row.name)
+      .filter((name: string | null): name is string => Boolean(name) && name !== "-")
   };
 
   if (total <= 0) {
@@ -166,10 +170,18 @@ export async function getExplorePoints(
     returned: points.length,
     step,
     filters,
-    points: points.map((p) => ({
-      ts: Number(p.ts),
-      tokens: Number(p.tokens ?? 0),
-      inputTokens: Number(p.inputTokens ?? 0),
+      points: points.map((p: {
+        ts: unknown;
+        tokens: unknown;
+        inputTokens: unknown;
+        outputTokens: unknown;
+        reasoningTokens: unknown;
+        cachedTokens: unknown;
+        model: unknown;
+      }) => ({
+        ts: Number(p.ts),
+        tokens: Number(p.tokens ?? 0),
+        inputTokens: Number(p.inputTokens ?? 0),
       outputTokens: Number(p.outputTokens ?? 0),
       reasoningTokens: Number(p.reasoningTokens ?? 0),
       cachedTokens: Number(p.cachedTokens ?? 0),

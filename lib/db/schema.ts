@@ -1,4 +1,5 @@
-import { pgTable, serial, text, integer, timestamp, boolean, numeric, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, serial, text, integer, timestamp, boolean, numeric, index, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const modelPrices = pgTable("model_prices", {
   id: serial("id").primaryKey(),
@@ -18,6 +19,7 @@ export const usageRecords = pgTable(
     route: text("route").notNull(),
     source: text("source").notNull().default(""),
     authIndex: text("auth_index"),
+    requestId: text("request_id"),
     model: text("model").notNull(),
     totalTokens: integer("total_tokens").notNull(),
     inputTokens: integer("input_tokens").notNull(),
@@ -28,17 +30,26 @@ export const usageRecords = pgTable(
     raw: text("raw").notNull()
   },
   (table) => ({
-    uniq: uniqueIndex("usage_records_occurred_route_model_source_idx").on(table.occurredAt, table.route, table.model, table.source)
+    uniq: uniqueIndex("usage_records_occurred_route_model_source_idx").on(table.occurredAt, table.route, table.model, table.source),
+    requestIdUniq: uniqueIndex("usage_records_request_id_idx")
+      .on(table.requestId)
+      .where(sql`${table.requestId} is not null`)
   })
 );
 
-export const authFileMappings = pgTable("auth_file_mappings", {
-  authId: text("auth_id").primaryKey(),
-  name: text("name").notNull().default(""),
-  label: text("label"),
-  provider: text("provider"),
-  source: text("source"),
-  email: text("email"),
-  updatedAt: timestamp("updated_at", { withTimezone: true }),
-  syncedAt: timestamp("synced_at", { withTimezone: true }).defaultNow().notNull()
-});
+export const authFileMappings = pgTable(
+  "auth_file_mappings",
+  {
+    authId: text("auth_id").primaryKey(),
+    name: text("name").notNull().default(""),
+    label: text("label"),
+    provider: text("provider"),
+    source: text("source"),
+    email: text("email"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => ({
+    nameIdx: index("auth_file_mappings_name_idx").on(table.name)
+  })
+);

@@ -19,7 +19,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    assertEnv();
+    assertEnv({ requireManagementKey: true });
   } catch (error) {
     return NextResponse.json({ error: (error as Error).message }, { status: 501 });
   }
@@ -29,7 +29,10 @@ export async function GET(request: Request) {
   const url = name ? fileEndpoint(name) : listEndpoint();
 
   try {
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${config.cliproxy.apiKey}` }, cache: "no-store" });
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${config.cliproxy.managementKey}` },
+      cache: "no-store"
+    });
     if (!res.ok) {
       return NextResponse.json({ error: res.statusText }, { status: res.status });
     }

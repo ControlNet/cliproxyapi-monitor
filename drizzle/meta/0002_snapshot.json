@@ -1,6 +1,6 @@
 {
-  "id": "9b66308b-2fbe-4a29-b0c3-4c2a6a0d6a18",
-  "prevId": "30644093-528f-48c1-a4b6-c75d12fcc934",
+  "id": "f1c9c4d5-6f0c-4d77-9e20-3b7d4b8a6f21",
+  "prevId": "9b66308b-2fbe-4a29-b0c3-4c2a6a0d6a18",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -92,6 +92,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
         "model": {
           "name": "model",
           "type": "text",
@@ -145,8 +152,8 @@
         }
       },
       "indexes": {
-        "usage_records_occurred_route_model_idx": {
-          "name": "usage_records_occurred_route_model_idx",
+        "usage_records_occurred_route_model_source_idx": {
+          "name": "usage_records_occurred_route_model_source_idx",
           "columns": [
             {
               "expression": "occurred_at",
@@ -162,6 +169,12 @@
             },
             {
               "expression": "model",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -184,13 +197,9 @@
   "enums": {},
   "schemas": {},
   "sequences": {},
-  "views": {},
   "roles": {},
   "policies": {},
-  "functions": {},
-  "materializedViews": {},
-  "types": {},
-  "extensions": {},
+  "views": {},
   "_meta": {
     "columns": {},
     "schemas": {},

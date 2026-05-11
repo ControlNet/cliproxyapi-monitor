@@ -19,7 +19,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    assertEnv();
+    assertEnv({ requireManagementKey: true });
   } catch (error) {
     return NextResponse.json({ error: (error as Error).message }, { status: 501 });
   }
@@ -28,7 +28,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const after = searchParams.get("after");
     const res = await fetch(endpoint(after), {
-      headers: { Authorization: `Bearer ${config.cliproxy.apiKey}` },
+      headers: { Authorization: `Bearer ${config.cliproxy.managementKey}` },
       cache: "no-store"
     });
 

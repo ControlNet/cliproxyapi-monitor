@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gte, lte, or, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { authFileMappings, modelPrices, usageRecords } from "@/lib/db/schema";
+import { authFileMappings, usageRecords } from "@/lib/db/schema";
 
 export type UsageRecordRow = {
   id: number;
@@ -350,14 +350,20 @@ export async function getUsageRecords(input: UsageRecordsQueryInput): Promise<Us
         .limit(200),
     ]);
     filters = {
-      models: modelRows.map((row) => row.model),
-      routes: routeRows.map((row) => row.route),
-      sources: sourceRows.map((row) => row.source).filter((name): name is string => Boolean(name) && name !== "-")
+      models: modelRows
+        .map((row: { model: string | null }) => row.model)
+        .filter((model: string | null): model is string => Boolean(model)),
+      routes: routeRows
+        .map((row: { route: string | null }) => row.route)
+        .filter((route: string | null): route is string => Boolean(route)),
+      sources: sourceRows
+        .map((row: { source: string | null }) => row.source)
+        .filter((name: string | null): name is string => Boolean(name) && name !== "-")
     };
   }
 
   return {
-    items: items.map((row) => ({
+    items: items.map((row: UsageRecordRow) => ({
       ...row,
       cost: Number(row.cost ?? 0)
     })),

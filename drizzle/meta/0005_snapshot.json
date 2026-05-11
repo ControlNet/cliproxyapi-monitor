@@ -1,9 +1,88 @@
 {
-  "id": "9b66308b-2fbe-4a29-b0c3-4c2a6a0d6a18",
-  "prevId": "30644093-528f-48c1-a4b6-c75d12fcc934",
+  "id": "a8254a57-0050-4a28-9cb2-1bcb07e8ef0a",
+  "prevId": "cb548a39-9358-42b5-b5bd-5abfd6237a30",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
+    "public.auth_file_mappings": {
+      "name": "auth_file_mappings",
+      "schema": "",
+      "columns": {
+        "auth_id": {
+          "name": "auth_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "synced_at": {
+          "name": "synced_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "auth_file_mappings_name_idx": {
+          "name": "auth_file_mappings_name_idx",
+          "columns": [
+            {
+              "expression": "name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.model_prices": {
       "name": "model_prices",
       "schema": "",
@@ -92,6 +171,25 @@
           "primaryKey": false,
           "notNull": true
         },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "auth_index": {
+          "name": "auth_index",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "request_id": {
+          "name": "request_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "model": {
           "name": "model",
           "type": "text",
@@ -145,8 +243,8 @@
         }
       },
       "indexes": {
-        "usage_records_occurred_route_model_idx": {
-          "name": "usage_records_occurred_route_model_idx",
+        "usage_records_occurred_route_model_source_idx": {
+          "name": "usage_records_occurred_route_model_source_idx",
           "columns": [
             {
               "expression": "occurred_at",
@@ -165,9 +263,31 @@
               "isExpression": false,
               "asc": true,
               "nulls": "last"
+            },
+            {
+              "expression": "source",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
             }
           ],
           "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "usage_records_request_id_idx": {
+          "name": "usage_records_request_id_idx",
+          "columns": [
+            {
+              "expression": "request_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"usage_records\".\"request_id\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -184,13 +304,9 @@
   "enums": {},
   "schemas": {},
   "sequences": {},
-  "views": {},
   "roles": {},
   "policies": {},
-  "functions": {},
-  "materializedViews": {},
-  "types": {},
-  "extensions": {},
+  "views": {},
   "_meta": {
     "columns": {},
     "schemas": {},

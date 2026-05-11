@@ -260,8 +260,8 @@ export async function POST(request: Request) {
           .where(inArray(modelPrices.model, modelIds))
       : [];
 
-    const existingMap = new Map(
-      existingRows.map((row) => [
+    const existingMap = new Map<string, { input: string; cached: string; output: string }>(
+      existingRows.map((row: { model: string; input: unknown; cached: unknown; output: unknown }) => [
         row.model,
         {
           input: String(row.input ?? "0"),

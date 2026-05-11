@@ -234,7 +234,7 @@ function parseApiCallEnvelope(payload: unknown): ApiCallEnvelope {
 
 function managementHeaders() {
   return {
-    Authorization: `Bearer ${config.cliproxy.apiKey}`,
+    Authorization: `Bearer ${config.cliproxy.managementKey}`,
     "Content-Type": "application/json"
   };
 }

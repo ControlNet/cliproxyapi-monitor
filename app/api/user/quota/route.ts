@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    assertEnv();
+    assertEnv({ requireManagementKey: true });
   } catch {
     return userQuotaUnavailableResponse(CACHE_CONTROL_HEADER);
   }

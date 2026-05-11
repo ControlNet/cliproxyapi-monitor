@@ -1,6 +1,8 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
+type Db = ReturnType<typeof drizzle>;
+
 const PG_SSL_QUERY_KEYS = [
   "ssl",
   "sslmode",
@@ -59,22 +61,26 @@ function getSslOptions() {
 
 const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL || "";
 
-if (!connectionString) {
-  throw new Error("DATABASE_URL is required");
+function createMissingDbProxy() {
+  const error = new Error("DATABASE_URL is required");
+  return new Proxy({} as Db, {
+    get() {
+      throw error;
+    }
+  }) as Db;
 }
 
-const sslOptions = getSslOptions();
-const pgConnectionString = sslOptions
-  ? stripPgSslParams(connectionString)
-  : connectionString;
+const db: Db = connectionString
+  ? drizzle(
+      new Pool({
+        connectionString: getSslOptions() ? stripPgSslParams(connectionString) : connectionString,
+        ssl: getSslOptions(),
+        max: parseIntEnv("DATABASE_POOL_MAX", 5, 1),
+        idleTimeoutMillis: parseIntEnv("DATABASE_POOL_IDLE_TIMEOUT_MS", 10_000, 0),
+        connectionTimeoutMillis: parseIntEnv("DATABASE_POOL_CONNECTION_TIMEOUT_MS", 5_000, 0),
+        maxUses: parseIntEnv("DATABASE_POOL_MAX_USES", 7_500, 0)
+      })
+    )
+  : createMissingDbProxy();
 
-const pool = new Pool({
-  connectionString: pgConnectionString,
-  ssl: sslOptions,
-  max: parseIntEnv("DATABASE_POOL_MAX", 5, 1),
-  idleTimeoutMillis: parseIntEnv("DATABASE_POOL_IDLE_TIMEOUT_MS", 10_000, 0),
-  connectionTimeoutMillis: parseIntEnv("DATABASE_POOL_CONNECTION_TIMEOUT_MS", 5_000, 0),
-  maxUses: parseIntEnv("DATABASE_POOL_MAX_USES", 7_500, 0)
-});
-
-export const db = drizzle(pool);
+export { db };

@@ -10,7 +10,7 @@ function endpoint() {
 
 function authHeaders() {
   return {
-    Authorization: `Bearer ${config.cliproxy.apiKey}`,
+    Authorization: `Bearer ${config.cliproxy.managementKey}`,
     "Content-Type": "application/json"
   };
 }
@@ -22,7 +22,7 @@ async function handleToggle(request: Request) {
   }
 
   try {
-    assertEnv();
+    assertEnv({ requireManagementKey: true });
   } catch (error) {
     return NextResponse.json({ error: (error as Error).message }, { status: 501 });
   }
@@ -58,7 +58,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    assertEnv();
+    assertEnv({ requireManagementKey: true });
   } catch (error) {
     return NextResponse.json({ error: (error as Error).message }, { status: 501 });
   }
