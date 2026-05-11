@@ -3,6 +3,8 @@
 该项目基于 [sxjeru/CLIProxyAPI-Monitor](https://github.com/sxjeru/CLIProxyAPI-Monitor) 修改而来。主要修改了：
 - 使用 Docker Compose 部署
 - 使用本地 PostgreSQL 作为数据库
+- 新功能：允许用户用他们自己的 api key 去登录这个web portal，并且只显示对应的user view，不会暴露其他信息。
+- 新功能：吸收 [sxjeru/CLIProxyAPI-Monitor](https://github.com/sxjeru/CLIProxyAPI-Monitor) 中提到的`adapter.js`的逻辑，直接从CPA上游中获取数据，而不需要任何其他操作。
 - 对于 input token 的展示，统一为 `regular-input` 语义（`input - cached`）。
 
 最新版本的 CLIProxyAPI 已移除旧的聚合管理接口 `GET /v0/management/usage` 作为唯一可靠来源。本项目现在会优先走队列同步链路，顺序是 RESP 队列 -> HTTP `/v0/management/usage-queue` -> 旧版 `/v0/management/usage` 兜底，所以 README、compose 默认值和 smoke 脚本都按队列优先来配置。
