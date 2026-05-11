@@ -1,8 +1,9 @@
 services:
   dashboard:
+    # Final cpa-runtime validation should override this with a local build or local image tag, not Docker Hub latest.
     image: ${DASHBOARD_IMAGE:-controlnet/cliproxyapi-monitor:latest}
     ports:
-      - "${DASHBOARD_HOST_PORT:-8318}:3000"
+      - "${DASHBOARD_HOST_PORT:-9318}:3000"
     volumes:
       - ${CLIPROXY_CONFIG_BIND_MOUNT:-./config.yaml}:/app/config.yaml:ro
       - /etc/localtime:/etc/localtime:ro
@@ -39,7 +40,7 @@ services:
       - dashboard
     environment:
       CRON_SECRET: ${CRON_SECRET:-change-me-cron-secret}
-      # Latest CPA queue reads are destructive and default retention is short, so poll every minute unless you raised retention upstream.
+      # Match root compose defaults so short queue retention is still compatible during isolated runtime validation.
       CRON_SCHEDULE: ${CRON_SCHEDULE:-* * * * *}
     volumes:
       - /etc/localtime:/etc/localtime:ro
@@ -121,9 +122,11 @@ services:
   cli-proxy-api:
     image: eceasy/cli-proxy-api-plus:latest
     ports:
-      - "${CLIPROXY_API_HOST_PORT:-8317}:8317"
+      - "${CLIPROXY_API_HOST_PORT:-9317}:8317"
     volumes:
       - ${CLIPROXY_CONFIG_BIND_MOUNT:-./config.yaml}:/CLIProxyAPI/config.yaml
       - ${CLIPROXY_AUTHS_BIND_MOUNT:-./auths}:/root/.cli-proxy-api
       - ${CLIPROXY_LOGS_BIND_MOUNT:-./logs}:/CLIProxyAPI/logs
     restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"

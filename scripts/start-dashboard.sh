@@ -73,6 +73,10 @@ if [ -z "${CLIPROXY_API_BASE_URL:-}" ]; then
   export CLIPROXY_API_BASE_URL="http://cli-proxy-api:${upstream_port}"
 fi
 
+if [ -z "${CLIPROXY_MANAGEMENT_KEY:-}" ] && [ -n "${MANAGEMENT_PASSWORD:-}" ]; then
+  export CLIPROXY_MANAGEMENT_KEY="$MANAGEMENT_PASSWORD"
+fi
+
 if [ -z "${PASSWORD:-}" ] && [ -n "${CLIPROXY_SECRET_KEY:-}" ]; then
   export PASSWORD="$CLIPROXY_SECRET_KEY"
 fi
@@ -83,7 +87,7 @@ run_migrations_with_retry() {
 
   while [ "$attempt" -le "$max_attempts" ]; do
     echo "[startup] running database migrations (attempt ${attempt}/${max_attempts})"
-    if pnpm run migrate; then
+    if node /app/scripts/migrate.mjs; then
       echo "[startup] migrations completed"
       return 0
     fi
@@ -101,4 +105,4 @@ run_migrations_with_retry() {
 
 run_migrations_with_retry
 
-exec pnpm start
+exec node /app/node_modules/next/dist/bin/next start
