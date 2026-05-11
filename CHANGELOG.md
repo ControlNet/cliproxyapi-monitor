@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-05-11
+
+- `docker-compose.yml` 与 `cpa-runtime/docker-compose.yml` 现在支持用环境变量覆盖 dashboard/CPA 宿主机端口和 bind mount 路径，便于 smoke / `cpa-runtime` 验证改用临时目录与临时端口，不会误复用仓库默认的 `dashboard-data`、`auths`、`logs` 或固定端口。
+- `scripts/t15-smoke.sh` 改为自动分配空闲宿主机端口、把配置/数据库/auth/log/备份目录全部放到 `/tmp/opencode` 临时目录，并在容器内执行迁移与现有 `pg-backup.sh`，使默认 `bash scripts/t15-smoke.sh all` 能在已有线上风格容器存在时保持隔离验证。
+- `scripts/start-dashboard.sh` 运行时不再依赖 `pnpm` / Corepack；容器启动阶段直接执行 `node scripts/migrate.mjs` 与 Next.js 二进制，避免 Node 20 运行镜像里 `pnpm` 动态导入失败导致 dashboard 启动即崩溃。
+- `Dockerfile` 也不再依赖 Corepack 下载 `pnpm`；基础镜像直接安装固定版本 `pnpm@10.30.1`，保证本地构建 smoke 镜像与最终 `cpa-runtime` 本地镜像时不会在 `pnpm install` 阶段崩掉。
+- 更新 `.env.example`、`README.md`、根目录 `docker-compose.yml` 与 `cpa-runtime/docker-compose.yml`，补充 `CLIPROXY_MANAGEMENT_KEY`、队列同步来源/批大小/超时配置，并把默认 `sync-cron` 调整为每分钟一次，避免在最新 CPA 的短 retention 队列下漏读数据。
+- README 新增中文运维说明，明确最新 CPA 已移除旧聚合 `/usage` 作为主路径，现在优先走 RESP 队列，再回退到 HTTP `/usage-queue` 和旧版 `/usage`，同时说明 destructive queue read、retention、HTTPS 反代下的 HTTP fallback，以及 `cpa-runtime` 最终验证必须使用本地 build 或本地镜像覆盖。
+- `scripts/t15-smoke.sh` 的 pass 模式现在会记录并断言 `/api/sync` 返回了机器可读的 `source`（包括显式 legacy fallback），fail 模式仍会检查上游中断后的 5xx 错误和可追踪日志。
+- admin 调用记录里的“密钥”列现在只会显示 queue 事件里真实存在的 `api_key`；当 latest CPA 返回空 `api_key` 时页面会显示 `-`，不再误把 `POST /v1/responses` 之类的 endpoint 当作密钥展示。
+
 ## 2026-04-10
 
 - 新增 env 开关 `ALLOW_USER_SEE_QUOTA` 与 `/api/user/quota`：仅当显式开启时，已登录用户才能查看基于当前 user route 解析出的安全配额摘要；关闭时接口返回不可用且 `/user` 页面不会渲染配额面板。
