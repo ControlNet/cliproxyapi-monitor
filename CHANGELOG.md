@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-05-29
+
+- 为 overview 相关接口增加同 key in-flight 去重，并将 `getOverview()` 内部数据库查询从 11 路一次性并发改为最多 3 路分批执行，避免单个冷缓存请求耗尽默认 10 连接的 PostgreSQL pool，降低 `/api/prices` 等轻量接口被排队超时的概率。
+- `/api/prices` 新增 30 秒进程内读缓存与 in-flight 去重，并在手动价格写入、删除以及模型价格同步成功更新后主动失效，减少首页和价格同步后的重复数据库读取。
+- 将运行时数据库连接池默认值调整为更偏生产友好的配置：`DATABASE_POOL_MAX` 默认从 `5` 提升到 `10`，`DATABASE_POOL_CONNECTION_TIMEOUT_MS` 默认从 `5000` 提升到 `30000`，并在根目录与 `cpa-runtime` 的 compose 环境里显式传递这些默认值，降低 overview / sync / prices 等并发场景下的偶发连接获取超时概率。
+- 修正文档中的手动迁移排障命令：`README.md` 不再建议在运行容器里执行 `pnpm run migrate`，改为直接运行 `node /app/scripts/migrate.mjs`，避免把生产排障重新带回 Corepack / pnpm 路径。
+- `README.md` 新增 `ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING` 排障说明，明确该报错通常意味着当前运行镜像仍是旧 build，或有人在运行时手动调用了 `pnpm`。
+
 ## 2026-05-11
 
 - `docker-compose.yml` 与 `cpa-runtime/docker-compose.yml` 现在支持用环境变量覆盖 dashboard/CPA 宿主机端口和 bind mount 路径，便于 smoke / `cpa-runtime` 验证改用临时目录与临时端口，不会误复用仓库默认的 `dashboard-data`、`auths`、`logs` 或固定端口。

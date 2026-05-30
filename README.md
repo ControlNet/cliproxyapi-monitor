@@ -99,9 +99,9 @@ docker build -t <your-dockerhub-username>/cliproxyapi-monitor:latest .
 |---|---|---|
 | `POSTGRES_URL` | `DATABASE_URL` 的可选回退变量名 | 空 |
 | `DATABASE_CA` | PostgreSQL CA 证书，支持原始 PEM 或 Base64 PEM | 空 |
-| `DATABASE_POOL_MAX` | 连接池最大连接数 | `5` |
+| `DATABASE_POOL_MAX` | 连接池最大连接数 | `10` |
 | `DATABASE_POOL_IDLE_TIMEOUT_MS` | 空闲连接超时（毫秒） | `10000` |
-| `DATABASE_POOL_CONNECTION_TIMEOUT_MS` | 获取连接超时（毫秒） | `5000` |
+| `DATABASE_POOL_CONNECTION_TIMEOUT_MS` | 获取连接超时（毫秒） | `30000` |
 | `DATABASE_POOL_MAX_USES` | 单连接最大复用次数 | `7500` |
 | `ALLOW_USER_SEE_TOTAL_USAGE` | 是否允许 `/user` 切换到“全站聚合”安全视图；默认关闭 | `false` |
 | `ALLOW_USER_SEE_QUOTA` | 是否允许 `/user` 显示安全配额摘要与 `/api/user/quota`；默认关闭 | `false` |
@@ -181,8 +181,22 @@ docker run --rm \
 docker run --rm \
   --network "${PROJECT:-$(basename "$PWD")}_default" \
   -e DATABASE_URL="postgresql://postgres:cliproxy@postgres:5432/cliproxy" \
-  controlnet/cliproxyapi-monitor:latest pnpm run migrate
+  controlnet/cliproxyapi-monitor:latest \
+  node /app/scripts/migrate.mjs
 ```
+
+如果你在生产容器里看到下面这类报错：
+
+```text
+TypeError [ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING]
+.../corepack/.../pnpm.cjs
+```
+
+基本可以直接判断为“运行时误走了 `pnpm` / Corepack 路径”，而不是当前仓库里的默认启动脚本在调用 `pnpm`。本仓库当前镜像启动时会直接执行 `node /app/scripts/migrate.mjs`。如果你仍然看到上述报错，优先检查这三点：
+
+1. 当前运行中的 dashboard 镜像是否还是旧 build。
+2. 是否有人手动执行了 `pnpm run migrate` 之类的运行期命令。
+3. 是否已经重新 build 并重启了 dashboard 容器，而不是只重启旧容器。
 
 ## Local DEV
 1. 安装依赖：`pnpm install`
