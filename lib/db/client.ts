@@ -75,9 +75,9 @@ const db: Db = connectionString
       new Pool({
         connectionString: getSslOptions() ? stripPgSslParams(connectionString) : connectionString,
         ssl: getSslOptions(),
-        max: parseIntEnv("DATABASE_POOL_MAX", 5, 1),
+        max: parseIntEnv("DATABASE_POOL_MAX", 10, 1),
         idleTimeoutMillis: parseIntEnv("DATABASE_POOL_IDLE_TIMEOUT_MS", 10_000, 0),
-        connectionTimeoutMillis: parseIntEnv("DATABASE_POOL_CONNECTION_TIMEOUT_MS", 5_000, 0),
+        connectionTimeoutMillis: parseIntEnv("DATABASE_POOL_CONNECTION_TIMEOUT_MS", 30_000, 0),
         maxUses: parseIntEnv("DATABASE_POOL_MAX_USES", 7_500, 0)
       })
     )
