@@ -149,7 +149,7 @@ export async function getOverview(
   const credentialNameExpr = sql<string>`coalesce(nullif(${authFileMappings.name}, ''), nullif(${usageRecords.source}, ''), '-')`;
   const REGULAR_INPUT_EXPR = sql<number>`greatest(${sql.raw('"usage_records"."input_tokens"')} - ${sql.raw('"usage_records"."cached_tokens"')}, 0)`;
 
-  const totalsPromise: Promise<TotalsRow[]> = db
+  const totalsQuery = (): Promise<TotalsRow[]> => db
     .select({
       totalRequests: sql<number>`count(*)`,
       totalTokens: sql<number>`coalesce(sum(${usageRecords.totalTokens}), 0)`,
@@ -164,14 +164,14 @@ export async function getOverview(
     .from(usageRecords)
     .where(filterWhere);
 
-  const pricePromise: Promise<PriceRow[]> = db.select().from(modelPrices);
+  const priceQuery = (): Promise<PriceRow[]> => db.select().from(modelPrices);
 
-  const totalModelsPromise: Promise<{ count: number }[]> = db
+  const totalModelsQuery = (): Promise<{ count: number }[]> => db
     .select({ count: sql<number>`count(distinct ${usageRecords.model})` })
     .from(usageRecords)
     .where(filterWhere);
 
-  const byModelPromise: Promise<ModelAggRow[]> = db
+  const byModelQuery = (): Promise<ModelAggRow[]> => db
     .select({
       model: usageRecords.model,
       requests: sql<number>`count(*)`,
@@ -189,7 +189,7 @@ export async function getOverview(
     .limit(pageSize)
     .offset(offset);
 
-  const byDayPromise: Promise<DayAggRow[]> = db
+  const byDayQuery = (): Promise<DayAggRow[]> => db
     .select({
       label: sql<string>`to_char(${dayExpr}, 'YYYY-MM-DD')`,
       requests: sql<number>`count(*)`,
@@ -202,7 +202,7 @@ export async function getOverview(
     .orderBy(desc(dayExpr))
     .limit(days);
 
-  const byDayModelPromise: Promise<DayModelAggRow[]> = db
+  const byDayModelQuery = (): Promise<DayModelAggRow[]> => db
     .select({
       label: sql<string>`to_char(${dayExpr}, 'YYYY-MM-DD')`,
       model: usageRecords.model,
@@ -216,7 +216,7 @@ export async function getOverview(
     .groupBy(dayExpr, usageRecords.model)
     .orderBy(dayExpr, usageRecords.model);
 
-  const byHourPromise: Promise<HourAggRow[]> = db
+  const byHourQuery = (): Promise<HourAggRow[]> => db
     .select({
       label: sql<string>`to_char(${hourExpr}, 'MM-DD HH24')`,
       hourStart: sql<Date>`(${hourExpr}) at time zone ${tzLiteral}`,
@@ -232,28 +232,28 @@ export async function getOverview(
     .groupBy(hourExpr)
     .orderBy(hourExpr);
 
-  const availableModelsPromise: Promise<{ model: string }[]> = db
+  const availableModelsQuery = (): Promise<{ model: string }[]> => db
     .select({ model: usageRecords.model })
     .from(usageRecords)
     .where(baseWhere)
     .groupBy(usageRecords.model)
     .orderBy(usageRecords.model);
 
-  const availableRoutesPromise: Promise<{ route: string }[]> = db
+  const availableRoutesQuery = (): Promise<{ route: string }[]> => db
     .select({ route: usageRecords.route })
     .from(usageRecords)
     .where(baseWhere)
     .groupBy(usageRecords.route)
     .orderBy(usageRecords.route);
 
-  const availableSourcesPromise: Promise<{ source: string }[]> = db
+  const availableSourcesQuery = (): Promise<{ source: string }[]> => db
     .select({ source: usageRecords.source })
     .from(usageRecords)
     .where(baseWhere)
     .groupBy(usageRecords.source)
     .orderBy(usageRecords.source);
 
-  const availableNamesPromise: Promise<{ name: string | null }[]> = db
+  const availableNamesQuery = (): Promise<{ name: string | null }[]> => db
     .select({ name: credentialNameExpr })
     .from(usageRecords)
     .leftJoin(authFileMappings, eq(usageRecords.authIndex, authFileMappings.authId))
@@ -261,30 +261,24 @@ export async function getOverview(
     .groupBy(credentialNameExpr)
     .orderBy(credentialNameExpr);
 
-  const [
-    totalsRowResult,
-    priceRows,
-    totalModelsRowResult,
-    byModelRows,
-    byDayRows,
-    byDayModelRows,
-    byHourRows,
-    availableModelsRows,
-    availableRoutesRows,
-    availableSourcesRows,
-    availableNamesRows
-  ] = await Promise.all([
-    totalsPromise,
-    pricePromise,
-    totalModelsPromise,
-    byModelPromise,
-    byDayPromise,
-    byDayModelPromise,
-    byHourPromise,
-    availableModelsPromise,
-    availableRoutesPromise,
-    availableSourcesPromise,
-    availableNamesPromise
+  const [totalsRowResult, priceRows, totalModelsRowResult] = await Promise.all([
+    totalsQuery(),
+    priceQuery(),
+    totalModelsQuery()
+  ]);
+  const [byModelRows, byDayRows, byDayModelRows] = await Promise.all([
+    byModelQuery(),
+    byDayQuery(),
+    byDayModelQuery()
+  ]);
+  const [byHourRows, availableModelsRows, availableRoutesRows] = await Promise.all([
+    byHourQuery(),
+    availableModelsQuery(),
+    availableRoutesQuery()
+  ]);
+  const [availableSourcesRows, availableNamesRows] = await Promise.all([
+    availableSourcesQuery(),
+    availableNamesQuery()
   ]);
 
   const totalsRow =
@@ -352,7 +346,7 @@ export async function getOverview(
   const byHour: UsageSeriesPoint[] = byHourRows.map((row) => ({
     label: row.label,
     timestamp: (() => {
-      const d = new Date(row.hourStart as string);
+      const d = new Date(row.hourStart);
       return Number.isFinite(d.getTime()) ? d.toISOString() : undefined;
     })(),
     requests: toNumber(row.requests),
