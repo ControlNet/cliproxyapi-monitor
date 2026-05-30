@@ -15,6 +15,7 @@ const OVERVIEW_CACHE_TTL_MS = 30_000;
 const OVERVIEW_CACHE_MAX_ENTRIES = 100;
 const CACHE_CONTROL_HEADER = USER_API_CACHE_CONTROL_HEADER;
 const overviewCache = new Map<string, CachedOverview>();
+const overviewInFlight = new Map<string, Promise<CachedOverview["value"]>>();
 
 function makeCacheKey(input: {
   sessionRoute: string;
@@ -105,7 +106,14 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const payload = await getUserOverview(session, days, {
+    const inFlightKey = `${cacheKey}:skip=${skipCache}`;
+    const pending = overviewInFlight.get(inFlightKey);
+    if (pending) {
+      const payload = await pending;
+      return NextResponse.json(payload, { status: 200, headers: CACHE_CONTROL_HEADER });
+    }
+
+    const requestPromise = getUserOverview(session, days, {
       view,
       model: model || undefined,
       page,
@@ -113,9 +121,17 @@ export async function GET(request: NextRequest) {
       start,
       end,
       timezone: config.timezone
+    }).then((payload) => {
+      setCached(cacheKey, payload);
+      return payload;
+    }).finally(() => {
+      if (overviewInFlight.get(inFlightKey) === requestPromise) {
+        overviewInFlight.delete(inFlightKey);
+      }
     });
 
-    setCached(cacheKey, payload);
+    overviewInFlight.set(inFlightKey, requestPromise);
+    const payload = await requestPromise;
     return NextResponse.json(payload, { status: 200, headers: CACHE_CONTROL_HEADER });
   } catch (error) {
     console.error("/api/user/overview failed:", error);

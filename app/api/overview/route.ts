@@ -19,6 +19,7 @@ type CachedOverview = {
 const OVERVIEW_CACHE_TTL_MS = 30_000;
 const OVERVIEW_CACHE_MAX_ENTRIES = 100;
 const overviewCache = new Map<string, CachedOverview>();
+const overviewInFlight = new Map<string, Promise<CachedOverview["value"]>>();
 
 function makeCacheKey(input: { days?: number; model?: string | null; route?: string | null; source?: string | null; name?: string | null; page?: number; pageSize?: number; start?: string | null; end?: string | null }) {
   return JSON.stringify({
@@ -84,7 +85,14 @@ export async function GET(request: Request) {
       }
     }
 
-    const { overview, empty, days: appliedDays, meta, filters, timezone } = await getOverview(days, {
+    const inFlightKey = `${cacheKey}:skip=${skipCache}`;
+    const pending = overviewInFlight.get(inFlightKey);
+    if (pending) {
+      const payload = await pending;
+      return NextResponse.json(payload, { status: 200 });
+    }
+
+    const requestPromise = getOverview(days, {
       model: model || undefined,
       route: route || undefined,
       source: source || undefined,
@@ -94,10 +102,18 @@ export async function GET(request: Request) {
       start,
       end,
       timezone: config.timezone
+    }).then(({ overview, empty, days: appliedDays, meta, filters, timezone }) => {
+      const payload = { overview, empty, days: appliedDays, meta, filters, timezone };
+      setCached(cacheKey, payload);
+      return payload;
+    }).finally(() => {
+      if (overviewInFlight.get(inFlightKey) === requestPromise) {
+        overviewInFlight.delete(inFlightKey);
+      }
     });
 
-    const payload = { overview, empty, days: appliedDays, meta, filters, timezone };
-    setCached(cacheKey, payload);
+    overviewInFlight.set(inFlightKey, requestPromise);
+    const payload = await requestPromise;
     return NextResponse.json(payload, { status: 200 });
   } catch (error) {
     console.error("/api/overview failed:", error);
