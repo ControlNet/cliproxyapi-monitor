@@ -4,6 +4,7 @@ import { inArray, desc } from "drizzle-orm";
 import { config } from "@/lib/config";
 import { db } from "@/lib/db/client";
 import { modelPrices, usageRecords } from "@/lib/db/schema";
+import { invalidateModelPricesCache } from "@/lib/queries/model-prices";
 
 export const runtime = "nodejs";
 
@@ -322,6 +323,10 @@ export async function POST(request: Request) {
           };
         }
       }
+    }
+
+    if (updatedCount > 0) {
+      invalidateModelPricesCache();
     }
 
     return NextResponse.json({
