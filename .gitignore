@@ -20,3 +20,6 @@ backups/
 config.yaml
 .sisyphus/
 *.db
+.omo/evidence
+.omo/run-continuation
+.omo/boulder.json
