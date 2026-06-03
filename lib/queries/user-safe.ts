@@ -5,8 +5,13 @@ import type { UserSession } from "@/lib/user-session";
 
 export type UserOverviewView = "self" | "global";
 export type UserOverviewFilters = { models: string[] };
+export type UserOverviewModelCost = Pick<UsageOverview["models"][number], "model" | "cost">;
 export type UserOverviewSummary = {
   totalTokens: number;
+  totalRawInputTokens: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCachedTokens: number;
   estimatedCost: number;
   totalCost: number;
   avgTpm: number;
@@ -22,7 +27,12 @@ export type UserOverviewResult = {
   overview: UsageOverview;
   summary: UserOverviewSummary;
   trends: UserOverviewTrends;
+  models: UserOverviewModelCost[];
   totalTokens: number;
+  totalRawInputTokens: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCachedTokens: number;
   estimatedCost: number;
   totalCost: number;
   avgTpm: number;
@@ -99,12 +109,20 @@ function buildUserOverviewSummary(overview: UsageOverview, appliedDays: number):
 
   return {
     totalTokens: overview.totalTokens,
+    totalRawInputTokens: overview.totalRawInputTokens,
+    totalInputTokens: overview.totalInputTokens,
+    totalOutputTokens: overview.totalOutputTokens,
+    totalCachedTokens: overview.totalCachedTokens,
     estimatedCost: overview.totalCost,
     totalCost: overview.totalCost,
     avgTpm,
     requestCount: overview.totalRequests,
     totalRequests: overview.totalRequests
   };
+}
+
+function toUserModelCosts(models: UsageOverview["models"]): UserOverviewModelCost[] {
+  return models.map((model) => ({ model: model.model, cost: model.cost }));
 }
 
 export async function getUserOverview(
@@ -124,6 +142,7 @@ export async function getUserOverview(
   });
 
   const summary = buildUserOverviewSummary(result.overview, result.days);
+  const models = toUserModelCosts(result.overview.models);
 
   return {
     view,
@@ -133,7 +152,12 @@ export async function getUserOverview(
       byDay: result.overview.byDay,
       byHour: result.overview.byHour
     },
+    models,
     totalTokens: summary.totalTokens,
+    totalRawInputTokens: summary.totalRawInputTokens,
+    totalInputTokens: summary.totalInputTokens,
+    totalOutputTokens: summary.totalOutputTokens,
+    totalCachedTokens: summary.totalCachedTokens,
     estimatedCost: summary.estimatedCost,
     totalCost: summary.totalCost,
     avgTpm: summary.avgTpm,

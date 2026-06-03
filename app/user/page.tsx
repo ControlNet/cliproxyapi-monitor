@@ -25,6 +25,10 @@ type SavedRangeSelection = {
 
 type OverviewSummary = {
   totalTokens: number;
+  totalRawInputTokens: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCachedTokens: number;
   estimatedCost: number;
   avgTpm: number;
   requestCount: number;
@@ -34,6 +38,10 @@ type UserOverviewResponse = {
   view: DashboardViewMode;
   summary?: OverviewSummary;
   totalTokens: number;
+  totalRawInputTokens: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCachedTokens: number;
   estimatedCost: number;
   totalCost: number;
   avgTpm: number;
@@ -42,6 +50,7 @@ type UserOverviewResponse = {
   empty: boolean;
   days: number;
   timezone?: string;
+  models: Array<{ model: string; cost: number }>;
   trends: {
     byDay: UsageSeriesPoint[];
     byHour: UsageSeriesPoint[];
@@ -102,6 +111,38 @@ function formatDecimal(value: number) {
   }).format(value);
 }
 
+type UserTokenStatTone = "input" | "cached" | "output" | "rate";
+
+type UserTokenStatsInput = {
+  totalRawInputTokens: number;
+  totalInputTokens: number;
+  totalCachedTokens: number;
+  totalOutputTokens: number;
+};
+
+export function buildUserTokenStats(input: UserTokenStatsInput) {
+  const cacheRate = input.totalRawInputTokens > 0
+    ? (input.totalCachedTokens / input.totalRawInputTokens) * 100
+    : 0;
+
+  return [
+    { label: "Input", value: formatNumberWithCommas(input.totalInputTokens), tone: "input" as const },
+    { label: "Cache Input", value: formatNumberWithCommas(input.totalCachedTokens), tone: "cached" as const },
+    { label: "Output", value: formatNumberWithCommas(input.totalOutputTokens), tone: "output" as const },
+    { label: "Cache Rate", value: `${cacheRate.toFixed(2)}%`, tone: "rate" as const }
+  ];
+}
+
+export function buildEstimatedCostStats(models: Array<{ model: string; cost: number }>) {
+  return [...models]
+    .sort((a, b) => b.cost - a.cost)
+    .slice(0, 4)
+    .map((model) => ({
+      label: model.model,
+      value: formatCurrency(model.cost)
+    }));
+}
+
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) {
     return error.message;
@@ -150,7 +191,7 @@ function SummaryCard({
 }: {
   label: string;
   value: string;
-  caption: string;
+  caption?: string;
   accent: "slate" | "amber" | "emerald" | "blue";
 }) {
   const accentStyles = {
@@ -182,7 +223,66 @@ function SummaryCard({
     <article className={`rounded-2xl border p-5 shadow-lg shadow-slate-950/10 ${styles.card}`}>
       <p className={`text-sm uppercase tracking-[0.18em] ${styles.label}`}>{label}</p>
       <p className="mt-3 text-3xl font-semibold text-white">{value}</p>
-      <p className={`mt-2 text-sm ${styles.caption}`}>{caption}</p>
+      {caption ? <p className={`mt-2 text-sm ${styles.caption}`}>{caption}</p> : null}
+    </article>
+  );
+}
+
+function TokenSummaryCard({
+  value,
+  stats
+}: {
+  value: string;
+  stats: Array<{ label: string; value: string; tone: UserTokenStatTone }>;
+}) {
+  const toneStyles: Record<UserTokenStatTone, string> = {
+    input: "border-rose-500/30 bg-rose-500/10 text-rose-200",
+    cached: "border-violet-500/30 bg-violet-500/10 text-violet-200",
+    output: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+    rate: "border-amber-500/30 bg-amber-500/10 text-amber-200"
+  };
+
+  return (
+    <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg shadow-slate-950/10">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm uppercase tracking-[0.18em] text-slate-400">Tokens</p>
+          <p className="mt-3 text-3xl font-semibold text-white">{value}</p>
+        </div>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        {stats.map((stat) => (
+          <div key={stat.label} className={`rounded-xl border px-3 py-2 ${toneStyles[stat.tone]}`}>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] opacity-70">{stat.label}</p>
+            <p className="mt-1 text-sm font-semibold tabular-nums text-white">{stat.value}</p>
+          </div>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function EstimatedCostCard({
+  value,
+  stats
+}: {
+  value: string;
+  stats: Array<{ label: string; value: string }>;
+}) {
+  return (
+    <article className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5 shadow-lg shadow-slate-950/10">
+      <p className="text-sm uppercase tracking-[0.18em] text-amber-300">Estimated Cost</p>
+      <p className="mt-3 text-3xl font-semibold text-white">{value}</p>
+      {stats.length ? (
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          {stats.map((stat) => (
+            <div key={stat.label} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-200">
+              <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] opacity-70" title={stat.label}>{stat.label}</p>
+              <p className="mt-1 text-sm font-semibold tabular-nums text-white">{stat.value}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -601,7 +701,14 @@ export default function UserDashboardPage() {
 
   const summary = overview?.summary;
   const totalTokens = summary?.totalTokens ?? overview?.totalTokens ?? 0;
+  const tokenStats = buildUserTokenStats({
+    totalRawInputTokens: summary?.totalRawInputTokens ?? overview?.totalRawInputTokens ?? 0,
+    totalInputTokens: summary?.totalInputTokens ?? overview?.totalInputTokens ?? 0,
+    totalCachedTokens: summary?.totalCachedTokens ?? overview?.totalCachedTokens ?? 0,
+    totalOutputTokens: summary?.totalOutputTokens ?? overview?.totalOutputTokens ?? 0
+  });
   const estimatedCost = summary?.estimatedCost ?? overview?.estimatedCost ?? overview?.totalCost ?? 0;
+  const estimatedCostStats = buildEstimatedCostStats(overview?.models ?? []);
   const avgTpm = summary?.avgTpm ?? overview?.avgTpm ?? 0;
   const requestCount = summary?.requestCount ?? overview?.requestCount ?? overview?.totalRequests ?? 0;
 
@@ -824,28 +931,22 @@ export default function UserDashboardPage() {
             </>
           ) : (
             <>
-              <SummaryCard
-                label="Tokens"
+              <TokenSummaryCard
                 value={formatNumberWithCommas(totalTokens)}
-                caption={isGlobalMode ? "全站聚合 token 总量" : "当前身份的 token 总量"}
-                accent="slate"
+                stats={tokenStats}
               />
-              <SummaryCard
-                label="Estimated Cost"
+              <EstimatedCostCard
                 value={formatCurrency(estimatedCost)}
-                caption="基于服务端概览直接返回的估算费用"
-                accent="amber"
+                stats={estimatedCostStats}
               />
               <SummaryCard
                 label="平均 TPM"
                 value={formatDecimal(avgTpm)}
-                caption="使用服务端 summary.avgTpm，不在客户端重算"
                 accent="emerald"
               />
               <SummaryCard
                 label="Request Count"
                 value={formatNumberWithCommas(requestCount)}
-                caption={rangeSubtitle}
                 accent="blue"
               />
             </>

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-06-01
+
+- 移除 `/user` 首页 Tokens 摘要卡中的“当前身份的 token 总量 / 全站聚合 token 总量”说明文字，保留总量与细分小块。
+- `/user` 首页 Estimated Cost 摘要卡新增 top-4 模型费用小块，并移除原有辅助说明文字。
+- 移除 `/user` 首页平均 TPM 与 Request Count 摘要卡中无实际信息量的说明文字，保留指标本身。
+- `/user` 首页的 Tokens 摘要卡新增 Input、Cache Input、Output 与 Cache Rate 四个小统计块，并复用 admin 首页的 regular-input 口径（input 不含 cache input）。
+
 ## 2026-05-29
 
 - 为 overview 相关接口增加同 key in-flight 去重，并将 `getOverview()` 内部数据库查询从 11 路一次性并发改为最多 3 路分批执行，避免单个冷缓存请求耗尽默认 10 连接的 PostgreSQL pool，降低 `/api/prices` 等轻量接口被排队超时的概率。
